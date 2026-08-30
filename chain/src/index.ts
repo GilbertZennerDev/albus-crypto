@@ -12,6 +12,9 @@ const CHAIN_SYMBOL = "ALB";
 const chain = new Blockchain();
 const pool = new MiningPool();
 const app = express();
+// Behind Caddy: trust its X-Forwarded-For so req.ip is the real client IP,
+// not the proxy's — the mining-pool's per-IP share cap depends on this.
+app.set("trust proxy", true);
 app.use(cors());
 app.use(express.json());
 
@@ -74,7 +77,7 @@ app.get("/mining/shares", (_req, res) => {
 
 app.post("/mining/submit", (req, res) => {
   const { address, nonce } = req.body ?? {};
-  const result = pool.submitShare(address, nonce);
+  const result = pool.submitShare(address, nonce, req.ip ?? "unknown");
   if (!result.ok) return res.status(400).json({ error: result.error });
   res.status(201).json(result);
 });

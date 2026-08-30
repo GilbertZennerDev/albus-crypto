@@ -3,9 +3,17 @@
 # Caddyfile (the shared edge Caddy's config), same pattern as the touch-me /
 # trace-route / guess-pw blocks there — kept here too as a record of what
 # was added and in case that file ever needs restoring.
+#
+# NOTE: this project's compose services are named "chain" and "web" — but
+# "web" is also the service name in soulr, workflow-solved, and
+# practice-eval-shell, and Compose registers the service name as a network
+# alias on the shared feierblum_default network. Multiple containers
+# claiming the same alias on one Docker network makes DNS resolution for
+# "web" ambiguous, so route by the container's actual (unique) name instead
+# of the service alias: albus-crypto-web-1 / albus-crypto-chain-1.
 
 albus.workflowsolved.com {
-    reverse_proxy web:80
+    reverse_proxy albus-crypto-web-1:80
     encode zstd gzip
 
     header {
@@ -16,7 +24,7 @@ albus.workflowsolved.com {
 }
 
 api.albus.workflowsolved.com {
-    reverse_proxy chain:4000
+    reverse_proxy albus-crypto-chain-1:4000
     encode zstd gzip
 
     header {
