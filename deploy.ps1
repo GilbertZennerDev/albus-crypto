@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 
 $ServerUser  = "root"
 $ServerHost  = "89.167.25.230"
-$ServerPath  = "/opt/albus"
+$ServerPath  = "/opt/albus-crypto"
 $ChainImage  = "albus-chain:latest"
 $WebImage    = "albus-web:latest"
 $ChainTar    = "albus-chain.tar"
