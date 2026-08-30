@@ -1,0 +1,27 @@
+# Not run standalone — this app has no Caddy container of its own (see
+# docker-compose.yml). Merge these blocks into ../feierblum-networking's
+# Caddyfile (the shared edge Caddy's config), same pattern as the touch-me /
+# trace-route / guess-pw blocks there — kept here too as a record of what
+# was added and in case that file ever needs restoring.
+
+albus.workflowsolved.com {
+    reverse_proxy web:80
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+
+api.albus.workflowsolved.com {
+    reverse_proxy chain:4000
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
