@@ -8,8 +8,8 @@ container name over the external `feierblum_default` network.
 ## One-time server setup
 
 ```bash
-mkdir -p /opt/albus
-cd /opt/albus
+mkdir -p /opt/albus-crypto
+cd /opt/albus-crypto
 git clone <this repo> .
 cp .env.example .env   # fill in VITE_ALBUS_API_URL and any chain tuning
 ```
@@ -30,7 +30,7 @@ server — same workaround as `guess-pw/deploy.ps1` and
 ```
 
 This builds `albus-chain` and `albus-web` locally, `docker save`s them,
-`scp`s the tarballs to `/opt/albus` on the server, and runs `docker load` +
+`scp`s the tarballs to `/opt/albus-crypto` on the server, and runs `docker load` +
 `docker compose up -d` there — so the server's `docker compose up -d` just
 starts the already-loaded images instead of rebuilding.
 
