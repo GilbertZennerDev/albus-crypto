@@ -11,6 +11,9 @@ proportional to the work they actually contribute.
   API. Chain state persists to `chain/data/chain.json`.
 - **`web/`** — the webapp: wallet generation/import (private key never leaves
   the browser), balance + send, a block explorer, and the mining panel.
+- **`miner/`** — a standalone offline CLI miner: same PoW-share protocol as
+  the browser Web Worker, but runs continuously as a headless, multi-threaded
+  process (no browser tab needed). See `miner/README.md`.
 - **Mining pool** — the server issues a rotating challenge (`seed`,
   `difficulty`). Each browser runs a Web Worker that repeatedly hashes
   `sha256(seed|address|nonce)` looking for a hash with enough leading zeros —

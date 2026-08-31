@@ -11,7 +11,14 @@ export const SHARE_DIFFICULTY = Number(process.env.SHARE_DIFFICULTY ?? 4);
 // device. Capping total shares credited per source IP per epoch means
 // splitting across wallets doesn't multiply payout — the IP's total stays
 // bounded regardless of how many addresses submit under it.
-const MAX_SHARES_PER_IP_PER_EPOCH = Number(process.env.MAX_SHARES_PER_IP_PER_EPOCH ?? 500);
+//
+// This has to be tuned against real hashrate, not just "high enough to feel
+// safe": a native CLI miner (see ../miner/) can find on the order of 1e5-1e6
+// qualifying shares per epoch at low SHARE_DIFFICULTY, so a cap sized for
+// browser-JS hashing would throttle a single legitimate fast miner almost
+// immediately. Raise SHARE_DIFFICULTY in production to bring real share
+// volume down instead of raising this arbitrarily high.
+const MAX_SHARES_PER_IP_PER_EPOCH = Number(process.env.MAX_SHARES_PER_IP_PER_EPOCH ?? 100_000);
 
 interface ShareState {
   seed: string;
@@ -26,12 +33,27 @@ function newSeed(): string {
 
 export class MiningPool {
   private state: ShareState;
+  // Dedup set for the current epoch — kept separate from state.seenNonces
+  // (which is just the persisted snapshot) so the hot path is an O(1) Set
+  // lookup instead of the O(n) Array.includes scan this used to do on every
+  // single share, which was measurably slow at real mining volume.
+  private seenNonces: Set<string>;
 
   constructor() {
     this.state = readJson<ShareState>(SHARES_FILE) ?? { seed: newSeed(), shares: {}, ipShares: {}, seenNonces: [] };
+    this.seenNonces = new Set(this.state.seenNonces);
   }
 
+  // Persisting on every accepted share meant hundreds-to-thousands of atomic
+  // disk writes per second under real mining load — needless I/O, and on at
+  // least one filesystem (Windows, rename-over-existing) frequent enough to
+  // hit a transient EPERM and crash the whole process. Shares are ephemeral
+  // within an epoch anyway (same tradeoff as the in-memory-only mempool), so
+  // only rotateEpoch persists — losing at most one in-flight epoch's tally
+  // on a crash is an acceptable cost for not risking the server's stability
+  // on every share.
   private persist(): void {
+    this.state.seenNonces = [...this.seenNonces];
     writeJsonAtomic(SHARES_FILE, this.state);
   }
 
@@ -58,7 +80,7 @@ export class MiningPool {
       return { ok: false, error: "share limit reached for this epoch" };
     }
     const key = `${address}:${nonce}`;
-    if (this.state.seenNonces.includes(key)) return { ok: false, error: "duplicate share" };
+    if (this.seenNonces.has(key)) return { ok: false, error: "duplicate share" };
 
     const hash = bytesToHex(sha256(utf8ToBytes(`${this.state.seed}|${address}|${nonce}`)));
     if (!hash.startsWith("0".repeat(SHARE_DIFFICULTY))) {
@@ -67,9 +89,7 @@ export class MiningPool {
 
     this.state.shares[address] = (this.state.shares[address] ?? 0) + 1;
     this.state.ipShares[ip] = (this.state.ipShares[ip] ?? 0) + 1;
-    this.state.seenNonces.push(key);
-    if (this.state.seenNonces.length > 5000) this.state.seenNonces = this.state.seenNonces.slice(-2000);
-    this.persist();
+    this.seenNonces.add(key);
     return { ok: true, totalShares: this.state.shares[address] };
   }
 
@@ -77,6 +97,7 @@ export class MiningPool {
   rotateEpoch(): Record<string, number> {
     const snapshot = this.state.shares;
     this.state = { seed: newSeed(), shares: {}, ipShares: {}, seenNonces: [] };
+    this.seenNonces = new Set();
     this.persist();
     return snapshot;
   }
