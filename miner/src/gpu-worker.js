@@ -60,8 +60,21 @@ async function main() {
   const { create, globals } = await import("webgpu");
   const { GPUBufferUsage, GPUMapMode } = globals;
 
-  const navigator = { gpu: create([]) };
-  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  // On Windows, letting Dawn auto-pick a backend can land on Vulkan (a
+  // translation layer on some driver/OS combos) instead of D3D12 (Dawn's
+  // most mature, native Windows backend) — a plausible contributor to the
+  // sustained-load crashes this file otherwise works around via process
+  // isolation and batch shrinking. Forcing d3d12 explicitly is documented,
+  // low-risk, and worth it even if it only reduces crash frequency rather
+  // than eliminating it outright. Falls back to Dawn's own auto-selection
+  // if d3d12 isn't available on this machine (e.g. non-Windows).
+  const dawnArgs = process.platform === "win32" ? ["backend=d3d12"] : [];
+  let navigator = { gpu: create(dawnArgs) };
+  let adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  if (!adapter && dawnArgs.length > 0) {
+    navigator = { gpu: create([]) };
+    adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  }
   if (!adapter) throw new Error("no WebGPU adapter available");
   const device = await adapter.requestDevice();
 
