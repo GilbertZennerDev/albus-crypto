@@ -123,16 +123,19 @@ export class MinerController {
   // (Dawn via the `webgpu` package) is not fully stable under sustained use —
   // verified via a standalone stress test that it can crash with an access
   // violation independent of anything else running in the process, and in
-  // the field this has shown up as "very unstable" on at least one RTX card.
-  // That's a third-party native-binding issue, not a bug in the mining
-  // kernel itself (validated bit-exact against Node's own crypto across
-  // tens of thousands of samples with zero invalid shares). Since a crash
-  // can't be prevented outright, this takes two complementary approaches:
-  // process isolation contains the blast radius, and each restart shrinks
-  // the per-dispatch batch size — smaller batches mean less GPU work
-  // in flight per submission, which is the main lever available here against
-  // whatever in the binding is intolerant of sustained/heavy load. A card
-  // settles at whatever batch size it can actually sustain.
+  // the field this has shown up as "very unstable" on at least one RTX card,
+  // still crashing even at the smallest batch size. That's a third-party
+  // native-binding issue, not a bug in the mining kernel itself (validated
+  // bit-exact against Node's own crypto across tens of thousands of samples
+  // with zero invalid shares). Tried swapping to the wgpu-rs-based
+  // `@sylphx/webgpu` to sidestep it entirely — reverted, since every
+  // published version currently ships a macOS binary inside its Windows
+  // package by mistake (upstream bug, see gpu-worker.js). Since a crash
+  // can't be prevented outright here, this takes two complementary
+  // approaches: process isolation contains the blast radius, and each
+  // restart shrinks the per-dispatch batch size down to a floor, after which
+  // it just keeps retrying indefinitely (CPU mining is unaffected either
+  // way) — a card settles at whatever batch size it can actually sustain.
   _spawnGpuWorker() {
     const MAX_RESTARTS = 5;
     clearTimeout(this.gpuStabilityTimer);

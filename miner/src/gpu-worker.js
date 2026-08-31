@@ -6,6 +6,13 @@ import { SHA256_MINER_WGSL, MAX_FOUND_PER_DISPATCH } from "./sha256.wgsl.js";
 // other active worker_threads, so the GPU miner needs a fully isolated
 // process instead. This shim keeps the rest of the file's shape identical to
 // worker.js's worker_threads-based postMessage/on("message") protocol.
+//
+// Tried swapping to @sylphx/webgpu (wgpu-rs based, not Dawn) to sidestep
+// Dawn's sustained-load instability (see miner-controller.js) — reverted:
+// every published version (0.13.0 through the current 1.0.5) ships a macOS
+// ARM64 Mach-O binary inside its win32-x64-msvc package by mistake, so it
+// doesn't run on Windows at all. Worth revisiting if that upstream bug ever
+// gets fixed.
 const parentPort = {
   postMessage: (msg) => process.send(msg),
   on: (event, cb) => process.on(event === "message" ? "message" : event, cb),
