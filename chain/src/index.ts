@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import { Blockchain } from "./blockchain.js";
 import { generateKeyPair } from "./wallet.js";
-import { MiningPool } from "./mining-pool.js";
+import { MiningPool, MAX_BATCH_SIZE } from "./mining-pool.js";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const AUTO_MINE_INTERVAL_MS = Number(process.env.AUTO_MINE_INTERVAL_MS ?? 20_000);
@@ -79,6 +79,18 @@ app.post("/mining/submit", (req, res) => {
   const { address, nonce } = req.body ?? {};
   const result = pool.submitShare(address, nonce, req.ip ?? "unknown");
   if (!result.ok) return res.status(400).json({ error: result.error });
+  res.status(201).json(result);
+});
+
+// A fast miner can find thousands of shares per second — one HTTP request
+// per share overwhelms connection handling on both ends at that volume, so
+// clients batch found nonces and submit them together here instead.
+app.post("/mining/submit-batch", (req, res) => {
+  const { address, nonces } = req.body ?? {};
+  if (!Array.isArray(nonces) || nonces.length === 0 || nonces.length > MAX_BATCH_SIZE) {
+    return res.status(400).json({ error: `nonces must be a non-empty array of at most ${MAX_BATCH_SIZE}` });
+  }
+  const result = pool.submitShares(address, nonces, req.ip ?? "unknown");
   res.status(201).json(result);
 });
 

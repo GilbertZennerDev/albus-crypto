@@ -9,6 +9,8 @@ const GPU_DEFAULT_BATCH = 2_097_152;
 const GPU_MIN_BATCH = 65_536;
 const GPU_RESTART_DELAY_MS = 1500; // let the OS/driver fully release GPU resources before respawning
 const GPU_STABILITY_RESET_MS = 60_000; // this long without a crash resets the retry budget and batch size
+const SHARE_BATCH_FLUSH_MS = 200;
+const SHARE_BATCH_MAX_SIZE = 5000; // must match the server's MAX_BATCH_SIZE
 
 /**
  * Orchestrates the mining threads, challenge polling, and share submission.
@@ -33,6 +35,12 @@ export class MinerController {
     this.challengeTimer = null;
     this.lastReactiveRefresh = 0;
     this.lastError = null;
+    // Found shares are buffered and flushed in batches instead of one HTTP
+    // request per share — at real hashrates that's thousands of requests per
+    // second, which overwhelms connection handling on both ends (see
+    // src/index.ts's /mining/submit-batch for the server side).
+    this.pendingNonces = [];
+    this.batchFlushTimer = null;
   }
 
   getStatus() {
@@ -87,7 +95,10 @@ export class MinerController {
     this.lastError = null;
     this.gpuActive = false;
     this.hashrates.clear();
+    this.pendingNonces = [];
     this.running = true;
+
+    this.batchFlushTimer = setInterval(() => void this._flushPendingShares(), SHARE_BATCH_FLUSH_MS);
 
     for (let i = 0; i < this.config.workers; i++) {
       const worker = new Worker(new URL("./worker.js", import.meta.url), {
@@ -195,6 +206,9 @@ export class MinerController {
     this.running = false;
     clearInterval(this.challengeTimer);
     this.challengeTimer = null;
+    clearInterval(this.batchFlushTimer);
+    this.batchFlushTimer = null;
+    this.pendingNonces = [];
     for (const worker of this.workers) {
       worker.postMessage({ type: "stop" });
       void worker.terminate();
@@ -217,20 +231,33 @@ export class MinerController {
     } else if (msg.type === "share") {
       if (msg.seed !== this.currentChallenge?.seed) return; // stale share from a just-rotated epoch
       if (this.capped) return;
-      this._submitShare(msg.nonce)
-        .then((res) => {
-          if (res.ok) {
-            this.sharesAccepted++;
-          } else {
-            this.sharesRejected++;
-            if (res.error === "share limit reached for this epoch") this.capped = true;
-            else if (res.error === "share does not meet difficulty") this._refreshChallengeReactively();
-          }
-        })
-        .catch((err) => {
-          this.sharesRejected++;
-          this.lastError = err.message;
+      this.pendingNonces.push(msg.nonce);
+    }
+  }
+
+  async _flushPendingShares() {
+    if (this.pendingNonces.length === 0 || this.capped) return;
+    // Batches are capped to match the server's limit — normally one flush
+    // drains everything, this loop only matters if a flush was ever delayed
+    // long enough for more than one batch's worth to pile up.
+    while (this.pendingNonces.length > 0 && !this.capped) {
+      const batch = this.pendingNonces.splice(0, SHARE_BATCH_MAX_SIZE);
+      try {
+        const res = await fetch(`${this.config.api}/mining/submit-batch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address: this.config.address, nonces: batch }),
         });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        this.sharesAccepted += body.accepted;
+        this.sharesRejected += body.rejected;
+        if (body.lastError === "share limit reached for this epoch") this.capped = true;
+        else if (body.lastError === "share does not meet difficulty") this._refreshChallengeReactively();
+      } catch (err) {
+        this.sharesRejected += batch.length;
+        this.lastError = err.message;
+      }
     }
   }
 
@@ -249,6 +276,7 @@ export class MinerController {
       if (challenge.seed !== this.currentChallenge?.seed) {
         this.currentChallenge = challenge;
         this.capped = false;
+        this.pendingNonces = []; // shares still queued from the old epoch would just be rejected as stale
         const jobMsg = {
           type: "job",
           seed: challenge.seed,
@@ -261,17 +289,6 @@ export class MinerController {
     } catch (err) {
       this.lastError = `failed to fetch mining challenge: ${err.message}`;
     }
-  }
-
-  async _submitShare(nonce) {
-    const res = await fetch(`${this.config.api}/mining/submit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address: this.config.address, nonce }),
-    });
-    if (res.ok) return { ok: true };
-    const body = await res.json().catch(() => ({}));
-    return { ok: false, error: body.error };
   }
 }
 

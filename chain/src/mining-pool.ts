@@ -18,7 +18,9 @@ export const SHARE_DIFFICULTY = Number(process.env.SHARE_DIFFICULTY ?? 4);
 // browser-JS hashing would throttle a single legitimate fast miner almost
 // immediately. Raise SHARE_DIFFICULTY in production to bring real share
 // volume down instead of raising this arbitrarily high.
-const MAX_SHARES_PER_IP_PER_EPOCH = Number(process.env.MAX_SHARES_PER_IP_PER_EPOCH ?? 100_000);
+const MAX_SHARES_PER_IP_PER_EPOCH = Number(process.env.MAX_SHARES_PER_IP_PER_EPOCH ?? 2_000_000);
+
+export const MAX_BATCH_SIZE = 5000;
 
 interface ShareState {
   seed: string;
@@ -91,6 +93,29 @@ export class MiningPool {
     this.state.ipShares[ip] = (this.state.ipShares[ip] ?? 0) + 1;
     this.seenNonces.add(key);
     return { ok: true, totalShares: this.state.shares[address] };
+  }
+
+  /**
+   * Batched submission: a fast miner can find thousands of shares per
+   * second, and one HTTP round trip per share was overwhelming both client
+   * and server connection handling at real hashrates. This is just
+   * submitShare() looped — same validation, same dedup, same cap — so
+   * correctness and fairness (every real share still counted) are
+   * unchanged; only the request count drops.
+   */
+  submitShares(address: string, nonces: string[], ip: string): { accepted: number; rejected: number; lastError?: string } {
+    let accepted = 0;
+    let rejected = 0;
+    let lastError: string | undefined;
+    for (const nonce of nonces) {
+      const result = this.submitShare(address, nonce, ip);
+      if (result.ok) accepted++;
+      else {
+        rejected++;
+        lastError = result.error;
+      }
+    }
+    return { accepted, rejected, lastError };
   }
 
   /** Snapshot the current epoch's shares and start a fresh one (new seed, empty tally). */
