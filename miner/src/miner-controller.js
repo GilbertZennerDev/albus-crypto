@@ -1,5 +1,10 @@
 import { Worker } from "node:worker_threads";
+import { fork } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { cpus } from "node:os";
+
+const GPU_WORKER_PATH = fileURLToPath(new URL("./gpu-worker.js", import.meta.url));
+const GPU_HASHRATE_KEY = "gpu"; // child_process has no threadId; use a fixed key in the hashrates map
 
 /**
  * Orchestrates the mining threads, challenge polling, and share submission.
@@ -9,6 +14,9 @@ import { cpus } from "node:os";
 export class MinerController {
   constructor() {
     this.workers = [];
+    this.gpuWorker = null;
+    this.gpuActive = false;
+    this.gpuRestartCount = 0;
     this.hashrates = new Map();
     this.currentChallenge = null;
     this.sharesAccepted = 0;
@@ -28,6 +36,8 @@ export class MinerController {
       address: this.config?.address ?? null,
       api: this.config?.api ?? null,
       workers: this.config?.workers ?? 0,
+      gpuRequested: this.config?.gpu ?? false,
+      gpuActive: this.gpuActive,
       hashrate,
       sharesAccepted: this.sharesAccepted,
       sharesRejected: this.sharesRejected,
@@ -50,6 +60,7 @@ export class MinerController {
       address: config.address,
       api: config.api || "http://localhost:4000",
       workers,
+      gpu: config.gpu !== false, // best-effort by default; falls back to CPU-only if no GPU adapter
       // Must stay comfortably below the server's epoch length — see
       // src/index.js for why.
       interval: Number(config.interval) || 4000,
@@ -60,6 +71,7 @@ export class MinerController {
     this.currentChallenge = null;
     this.lastReactiveRefresh = 0;
     this.lastError = null;
+    this.gpuActive = false;
     this.hashrates.clear();
     this.running = true;
 
@@ -67,15 +79,80 @@ export class MinerController {
       const worker = new Worker(new URL("./worker.js", import.meta.url), {
         workerData: { workerId: i, stride: this.config.workers },
       });
-      worker.on("message", (msg) => this._handleWorkerMessage(worker, msg));
+      worker.on("message", (msg) => this._handleWorkerMessage(worker.threadId, msg));
       worker.on("error", (err) => {
         this.lastError = err.message;
       });
       this.workers.push(worker);
     }
 
+    this.gpuRestartCount = 0;
+    if (this.config.gpu) this._spawnGpuWorker();
+
     void this._refreshChallenge();
     this.challengeTimer = setInterval(() => void this._refreshChallenge(), this.config.interval);
+  }
+
+  // A separate OS process, not a worker_thread: this Node WebGPU binding
+  // (Dawn via the `webgpu` package) is not fully stable under sustained use —
+  // verified via a standalone stress test that it can crash with an access
+  // violation after a few thousand dispatch/readback cycles, independent of
+  // anything else running in the process. That's a third-party native-binding
+  // issue, not a bug in the mining kernel itself (which has been validated
+  // bit-exact against Node's own crypto across tens of thousands of samples
+  // with zero invalid shares). Since a crash can't be prevented outright, the
+  // process isolation contains its blast radius, and this method's restart
+  // logic (see the "exit" handler) papers over the instability by respawning
+  // — up to a limit, beyond which it gives up and stays CPU-only.
+  _spawnGpuWorker() {
+    const MAX_RESTARTS = 5;
+    const gpuWorker = fork(GPU_WORKER_PATH, { stdio: ["ignore", "inherit", "inherit", "ipc"] });
+
+    gpuWorker.on("message", (msg) => {
+      if (msg.type === "ready") {
+        this.gpuActive = true;
+        // Rearm whatever job is currently in flight — a freshly (re)spawned
+        // process starts with none.
+        if (this.currentChallenge) {
+          gpuWorker.send({
+            type: "job",
+            seed: this.currentChallenge.seed,
+            difficulty: this.currentChallenge.difficulty,
+            address: this.config.address,
+          });
+        }
+      } else if (msg.type === "gpu-error") {
+        // No compatible GPU/driver, or the job format didn't match what the
+        // kernel hardcodes — fall back to CPU-only rather than fail the
+        // whole miner.
+        this.lastError = `GPU mining unavailable: ${msg.error}`;
+        this.gpuActive = false;
+        this.hashrates.delete(GPU_HASHRATE_KEY);
+      } else {
+        this._handleWorkerMessage(GPU_HASHRATE_KEY, msg);
+      }
+    });
+    gpuWorker.on("error", (err) => {
+      this.lastError = `GPU mining unavailable: ${err.message}`;
+      this.gpuActive = false;
+    });
+    gpuWorker.on("exit", (code) => {
+      if (!this.running || this.gpuWorker !== gpuWorker) return; // stop() already handled cleanup
+      this.gpuActive = false;
+      this.hashrates.delete(GPU_HASHRATE_KEY);
+      if (code === 0) return;
+
+      this.gpuRestartCount++;
+      if (this.gpuRestartCount > MAX_RESTARTS) {
+        this.lastError = `GPU mining disabled after ${MAX_RESTARTS} crashes (last exit code ${code}) — continuing CPU-only`;
+        this.gpuWorker = null;
+        return;
+      }
+      this.lastError = `GPU mining process crashed (code ${code}), restarting (${this.gpuRestartCount}/${MAX_RESTARTS})...`;
+      this._spawnGpuWorker();
+    });
+
+    this.gpuWorker = gpuWorker;
   }
 
   stop() {
@@ -88,12 +165,19 @@ export class MinerController {
       void worker.terminate();
     }
     this.workers = [];
+    if (this.gpuWorker) {
+      this.gpuWorker.removeAllListeners("exit"); // avoid the "unexpected exit" branch firing on our own shutdown
+      this.gpuWorker.send({ type: "stop" });
+      this.gpuWorker.kill();
+      this.gpuWorker = null;
+    }
+    this.gpuActive = false;
     this.hashrates.clear();
   }
 
-  _handleWorkerMessage(worker, msg) {
+  _handleWorkerMessage(hashrateKey, msg) {
     if (msg.type === "hashrate") {
-      this.hashrates.set(worker.threadId, msg.hashesPerSecond);
+      this.hashrates.set(hashrateKey, msg.hashesPerSecond);
     } else if (msg.type === "share") {
       if (msg.seed !== this.currentChallenge?.seed) return; // stale share from a just-rotated epoch
       if (this.capped) return;
@@ -129,14 +213,14 @@ export class MinerController {
       if (challenge.seed !== this.currentChallenge?.seed) {
         this.currentChallenge = challenge;
         this.capped = false;
-        for (const worker of this.workers) {
-          worker.postMessage({
-            type: "job",
-            seed: challenge.seed,
-            difficulty: challenge.difficulty,
-            address: this.config.address,
-          });
-        }
+        const jobMsg = {
+          type: "job",
+          seed: challenge.seed,
+          difficulty: challenge.difficulty,
+          address: this.config.address,
+        };
+        for (const worker of this.workers) worker.postMessage(jobMsg);
+        if (this.gpuWorker) this.gpuWorker.send(jobMsg);
       }
     } catch (err) {
       this.lastError = `failed to fetch mining challenge: ${err.message}`;

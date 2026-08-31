@@ -8,7 +8,7 @@ function parseArgs(argv) {
   // default 20s) — every share found against a seed the server has already
   // rotated away from is dead on arrival ("share does not meet difficulty"),
   // so polling too slowly just wastes real hashing work.
-  const args = { workers: cpus().length, api: "http://localhost:4000", interval: 4_000, port: 5178 };
+  const args = { workers: cpus().length, api: "http://localhost:4000", interval: 4_000, port: 5178, gpu: true };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--address") args.address = argv[++i];
@@ -18,6 +18,7 @@ function parseArgs(argv) {
     else if (a === "--port") args.port = Number(argv[++i]);
     else if (a === "--generate-wallet") args.generateWallet = true;
     else if (a === "--ui") args.ui = true;
+    else if (a === "--no-gpu") args.gpu = false;
     else if (a === "--help" || a === "-h") args.help = true;
   }
   return args;
@@ -41,6 +42,8 @@ Options:
   --api <url>        Chain API base URL (default: http://localhost:4000)
   --workers <n>      Number of hashing threads (default: number of CPU cores)
   --interval <ms>    How often to poll for a fresh mining challenge (default: 4000)
+  --no-gpu           Disable GPU mining (on by default; falls back to CPU-only automatically
+                      if no compatible GPU/driver is found)
   --ui               Start the local web control panel instead of mining immediately
   --port <n>         Port for --ui (default: 5178)
   --generate-wallet  Create a new wallet via the API and print its keys, then exit
@@ -49,15 +52,24 @@ Options:
 }
 
 async function runHeadless(args) {
-  console.log(`Albus miner starting — address ${args.address}, ${args.workers} threads, API ${args.api}`);
+  console.log(
+    `Albus miner starting — address ${args.address}, ${args.workers} CPU threads${args.gpu ? " + GPU (if available)" : ""}, API ${args.api}`,
+  );
 
   const controller = new MinerController();
-  controller.start({ address: args.address, api: args.api, workers: args.workers, interval: args.interval });
+  controller.start({
+    address: args.address,
+    api: args.api,
+    workers: args.workers,
+    interval: args.interval,
+    gpu: args.gpu,
+  });
 
   const statsTimer = setInterval(() => {
     const s = controller.getStatus();
+    const gpuNote = s.gpuRequested ? (s.gpuActive ? " [GPU active]" : " [GPU unavailable]") : "";
     console.log(
-      `[${new Date().toLocaleTimeString()}] ${s.hashrate.toFixed(0)} h/s total | shares accepted: ${s.sharesAccepted}, rejected: ${s.sharesRejected}${s.capped ? " (capped for this epoch)" : ""}`,
+      `[${new Date().toLocaleTimeString()}] ${s.hashrate.toFixed(0)} h/s total${gpuNote} | shares accepted: ${s.sharesAccepted}, rejected: ${s.sharesRejected}${s.capped ? " (capped for this epoch)" : ""}`,
     );
     if (s.lastError) console.error(s.lastError);
   }, 5000);

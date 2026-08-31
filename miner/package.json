@@ -8,6 +8,10 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "ui": "node src/index.js --ui"
+    "ui": "node src/index.js --ui",
+    "test:gpu": "node test-gpu-worker.js"
+  },
+  "dependencies": {
+    "webgpu": "^0.6.0"
   }
 }

@@ -104,10 +104,14 @@
         <input id="api" />
       </div>
       <div>
-        <label for="workers">Threads</label>
+        <label for="workers">CPU threads</label>
         <input id="workers" type="number" min="1" />
       </div>
     </div>
+    <label style="display:flex; align-items:center; gap:8px; margin-bottom: 14px; cursor: pointer;">
+      <input id="gpu" type="checkbox" style="width:auto; margin:0;" checked />
+      Use GPU (WebGPU compute — much faster than CPU; falls back automatically if unavailable)
+    </label>
     <div class="row">
       <button id="start">Start mining</button>
       <button id="stop" disabled>Stop</button>
@@ -123,7 +127,7 @@
         <div class="stat-value mono" id="hashrate">—</div>
       </div>
       <div>
-        <div class="stat-label">Threads</div>
+        <div class="stat-label">Threads / GPU</div>
         <div class="stat-value mono" id="workers-display">—</div>
       </div>
       <div>
@@ -151,6 +155,7 @@ const els = {
   address: document.getElementById("address"),
   api: document.getElementById("api"),
   workers: document.getElementById("workers"),
+  gpu: document.getElementById("gpu"),
   start: document.getElementById("start"),
   stop: document.getElementById("stop"),
   error: document.getElementById("error"),
@@ -175,6 +180,7 @@ function saveConfig() {
     address: els.address.value,
     api: els.api.value,
     workers: els.workers.value,
+    gpu: els.gpu.checked,
   }));
 }
 
@@ -184,6 +190,7 @@ async function init() {
   els.address.value = saved.address || "";
   els.api.value = saved.api || defaults.api;
   els.workers.value = saved.workers || defaults.workers;
+  els.gpu.checked = saved.gpu !== false;
   await refreshStatus();
   setInterval(refreshStatus, 1000);
 }
@@ -193,7 +200,8 @@ function applyStatus(status) {
   els.start.disabled = status.running;
   els.stop.disabled = !status.running;
   els.hashrate.textContent = status.running ? formatHashrate(status.hashrate) : "—";
-  els.workersDisplay.textContent = status.workers || "—";
+  const gpuNote = status.gpuRequested ? (status.gpuActive ? " + GPU" : " + GPU (unavailable)") : "";
+  els.workersDisplay.textContent = status.workers ? `${status.workers}${gpuNote}` : "—";
   els.accepted.textContent = status.sharesAccepted;
   els.rejected.textContent = status.sharesRejected;
   els.cappedBadge.hidden = !status.capped;
@@ -219,6 +227,7 @@ els.start.addEventListener("click", async () => {
       address: els.address.value.trim(),
       api: els.api.value.trim(),
       workers: Number(els.workers.value),
+      gpu: els.gpu.checked,
     }),
   });
   const body = await res.json();
