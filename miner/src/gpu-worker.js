@@ -13,10 +13,13 @@ const parentPort = {
 
 // Threads per dispatch. Read back happens once per dispatch (a GPU/CPU sync
 // point), so bigger batches amortize that cost better but make the worker
-// slower to notice a new job (epoch rotation) — this is a reasonable middle
-// ground for consumer GPUs.
-const THREADS_PER_DISPATCH = 2_097_152; // 256 workgroup size * 8192 workgroups
+// slower to notice a new job (epoch rotation), and — per real-world reports
+// of crashes on at least one RTX card — bigger batches also seem to
+// correlate with instability in this Node WebGPU binding. MinerController
+// shrinks this (via env var) on each auto-restart after a crash, so a card
+// that can't sustain the default settles at whatever batch size it can.
 const WORKGROUP_SIZE = 256;
+const THREADS_PER_DISPATCH = Number(process.env.GPU_THREADS_PER_DISPATCH) || 2_097_152;
 
 let baseNonce = 0;
 let currentJob = null; // { seed, address, difficulty }
@@ -51,9 +54,20 @@ async function main() {
   const { GPUBufferUsage, GPUMapMode } = globals;
 
   const navigator = { gpu: create([]) };
-  const adapter = await navigator.gpu.requestAdapter();
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
   if (!adapter) throw new Error("no WebGPU adapter available");
   const device = await adapter.requestDevice();
+
+  // A lost device (driver reset/TDR, out-of-memory, etc.) turns further GPU
+  // calls into either rejected promises or — on this binding, at least
+  // sometimes — a native crash if we keep calling into it regardless. Catch
+  // the graceful signal when the binding gives us one, and stop cleanly
+  // instead of continuing to hammer a dead device.
+  device.lost.then((info) => {
+    running = false;
+    parentPort.postMessage({ type: "gpu-error", error: `GPU device lost: ${info.message || info.reason}` });
+    process.exit(1);
+  });
 
   const module = device.createShaderModule({ code: SHA256_MINER_WGSL });
   const pipeline = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "main" } });
@@ -105,6 +119,10 @@ async function main() {
     encoder.copyBufferToBuffer(countBuf, 0, readCountBuf, 0, 4);
     encoder.copyBufferToBuffer(noncesBuf, 0, readNoncesBuf, 0, MAX_FOUND_PER_DISPATCH * 4);
     device.queue.submit([encoder.finish()]);
+    // Explicit wait on top of mapAsync's own — cheap, and defends against
+    // this binding's mapAsync not always fully waiting for prior queued work
+    // before resolving (suspected contributor to the crashes this guards).
+    await device.queue.onSubmittedWorkDone();
 
     await readCountBuf.mapAsync(GPUMapMode.READ);
     const foundCount = Math.min(new Uint32Array(readCountBuf.getMappedRange().slice(0))[0], MAX_FOUND_PER_DISPATCH);

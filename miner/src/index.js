@@ -19,6 +19,7 @@ function parseArgs(argv) {
     else if (a === "--generate-wallet") args.generateWallet = true;
     else if (a === "--ui") args.ui = true;
     else if (a === "--no-gpu") args.gpu = false;
+    else if (a === "--gpu-batch-size") args.gpuBatchSize = Number(argv[++i]);
     else if (a === "--help" || a === "-h") args.help = true;
   }
   return args;
@@ -44,6 +45,9 @@ Options:
   --interval <ms>    How often to poll for a fresh mining challenge (default: 4000)
   --no-gpu           Disable GPU mining (on by default; falls back to CPU-only automatically
                       if no compatible GPU/driver is found)
+  --gpu-batch-size <n>  Threads per GPU dispatch (default: 2097152). If GPU mining crashes
+                      repeatedly on your card, try starting smaller (e.g. 262144) instead of
+                      waiting for the automatic per-crash shrink to get there
   --ui               Start the local web control panel instead of mining immediately
   --port <n>         Port for --ui (default: 5178)
   --generate-wallet  Create a new wallet via the API and print its keys, then exit
@@ -63,6 +67,7 @@ async function runHeadless(args) {
     workers: args.workers,
     interval: args.interval,
     gpu: args.gpu,
+    gpuBatchSize: args.gpuBatchSize,
   });
 
   const statsTimer = setInterval(() => {

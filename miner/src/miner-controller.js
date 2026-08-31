@@ -5,6 +5,10 @@ import { cpus } from "node:os";
 
 const GPU_WORKER_PATH = fileURLToPath(new URL("./gpu-worker.js", import.meta.url));
 const GPU_HASHRATE_KEY = "gpu"; // child_process has no threadId; use a fixed key in the hashrates map
+const GPU_DEFAULT_BATCH = 2_097_152;
+const GPU_MIN_BATCH = 65_536;
+const GPU_RESTART_DELAY_MS = 1500; // let the OS/driver fully release GPU resources before respawning
+const GPU_STABILITY_RESET_MS = 60_000; // this long without a crash resets the retry budget and batch size
 
 /**
  * Orchestrates the mining threads, challenge polling, and share submission.
@@ -17,6 +21,8 @@ export class MinerController {
     this.gpuWorker = null;
     this.gpuActive = false;
     this.gpuRestartCount = 0;
+    this.gpuBatchSize = GPU_DEFAULT_BATCH;
+    this.gpuStabilityTimer = null;
     this.hashrates = new Map();
     this.currentChallenge = null;
     this.sharesAccepted = 0;
@@ -38,6 +44,7 @@ export class MinerController {
       workers: this.config?.workers ?? 0,
       gpuRequested: this.config?.gpu ?? false,
       gpuActive: this.gpuActive,
+      gpuBatchSize: this.gpuBatchSize,
       hashrate,
       sharesAccepted: this.sharesAccepted,
       sharesRejected: this.sharesRejected,
@@ -87,6 +94,7 @@ export class MinerController {
     }
 
     this.gpuRestartCount = 0;
+    this.gpuBatchSize = Number(config.gpuBatchSize) || GPU_DEFAULT_BATCH;
     if (this.config.gpu) this._spawnGpuWorker();
 
     void this._refreshChallenge();
@@ -96,21 +104,36 @@ export class MinerController {
   // A separate OS process, not a worker_thread: this Node WebGPU binding
   // (Dawn via the `webgpu` package) is not fully stable under sustained use —
   // verified via a standalone stress test that it can crash with an access
-  // violation after a few thousand dispatch/readback cycles, independent of
-  // anything else running in the process. That's a third-party native-binding
-  // issue, not a bug in the mining kernel itself (which has been validated
-  // bit-exact against Node's own crypto across tens of thousands of samples
-  // with zero invalid shares). Since a crash can't be prevented outright, the
-  // process isolation contains its blast radius, and this method's restart
-  // logic (see the "exit" handler) papers over the instability by respawning
-  // — up to a limit, beyond which it gives up and stays CPU-only.
+  // violation independent of anything else running in the process, and in
+  // the field this has shown up as "very unstable" on at least one RTX card.
+  // That's a third-party native-binding issue, not a bug in the mining
+  // kernel itself (validated bit-exact against Node's own crypto across
+  // tens of thousands of samples with zero invalid shares). Since a crash
+  // can't be prevented outright, this takes two complementary approaches:
+  // process isolation contains the blast radius, and each restart shrinks
+  // the per-dispatch batch size — smaller batches mean less GPU work
+  // in flight per submission, which is the main lever available here against
+  // whatever in the binding is intolerant of sustained/heavy load. A card
+  // settles at whatever batch size it can actually sustain.
   _spawnGpuWorker() {
     const MAX_RESTARTS = 5;
-    const gpuWorker = fork(GPU_WORKER_PATH, { stdio: ["ignore", "inherit", "inherit", "ipc"] });
+    clearTimeout(this.gpuStabilityTimer);
+    const gpuWorker = fork(GPU_WORKER_PATH, {
+      env: { ...process.env, GPU_THREADS_PER_DISPATCH: String(this.gpuBatchSize) },
+      stdio: ["ignore", "inherit", "inherit", "ipc"],
+    });
 
     gpuWorker.on("message", (msg) => {
+      if (this.gpuWorker !== gpuWorker) return; // a newer restart already superseded this one
       if (msg.type === "ready") {
         this.gpuActive = true;
+        // Sustained stability resets the retry budget and batch size, so a
+        // one-off crash early in a long session doesn't permanently cap
+        // this run at a smaller, slower batch size forever.
+        this.gpuStabilityTimer = setTimeout(() => {
+          this.gpuRestartCount = 0;
+          this.gpuBatchSize = GPU_DEFAULT_BATCH;
+        }, GPU_STABILITY_RESET_MS);
         // Rearm whatever job is currently in flight — a freshly (re)spawned
         // process starts with none.
         if (this.currentChallenge) {
@@ -133,11 +156,13 @@ export class MinerController {
       }
     });
     gpuWorker.on("error", (err) => {
+      if (this.gpuWorker !== gpuWorker) return; // a newer restart already superseded this one
       this.lastError = `GPU mining unavailable: ${err.message}`;
       this.gpuActive = false;
     });
     gpuWorker.on("exit", (code) => {
       if (!this.running || this.gpuWorker !== gpuWorker) return; // stop() already handled cleanup
+      clearTimeout(this.gpuStabilityTimer);
       this.gpuActive = false;
       this.hashrates.delete(GPU_HASHRATE_KEY);
       if (code === 0) return;
@@ -148,8 +173,11 @@ export class MinerController {
         this.gpuWorker = null;
         return;
       }
-      this.lastError = `GPU mining process crashed (code ${code}), restarting (${this.gpuRestartCount}/${MAX_RESTARTS})...`;
-      this._spawnGpuWorker();
+      this.gpuBatchSize = Math.max(GPU_MIN_BATCH, Math.floor(this.gpuBatchSize / 2));
+      this.lastError = `GPU mining process crashed (code ${code}), retrying at a smaller batch size (${this.gpuRestartCount}/${MAX_RESTARTS})...`;
+      setTimeout(() => {
+        if (this.running) this._spawnGpuWorker();
+      }, GPU_RESTART_DELAY_MS);
     });
 
     this.gpuWorker = gpuWorker;
@@ -165,6 +193,7 @@ export class MinerController {
       void worker.terminate();
     }
     this.workers = [];
+    clearTimeout(this.gpuStabilityTimer);
     if (this.gpuWorker) {
       this.gpuWorker.removeAllListeners("exit"); // avoid the "unexpected exit" branch firing on our own shutdown
       this.gpuWorker.send({ type: "stop" });
