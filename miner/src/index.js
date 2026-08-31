@@ -4,10 +4,13 @@ import { MinerController, generateWallet } from "./miner-controller.js";
 import { startControlServer } from "./server.js";
 
 function parseArgs(argv) {
-  // Must stay comfortably below the server's epoch length (AUTO_MINE_INTERVAL_MS,
-  // default 20s) — every share found against a seed the server has already
-  // rotated away from is dead on arrival ("share does not meet difficulty"),
-  // so polling too slowly just wastes real hashing work.
+  // The job seed now changes the instant a block is found (or a new
+  // transaction lands in the mempool) rather than on a fixed epoch timer —
+  // polling too slowly just means hashing against a stale seed for longer
+  // (dead-on-arrival shares, "share does not meet difficulty"), so keep this
+  // reasonably short. The controller also refreshes reactively on a
+  // difficulty-mismatch response, so this interval mostly just bounds worst
+  // case staleness.
   const args = { workers: cpus().length, api: "http://localhost:4000", interval: 4_000, port: 5178, gpu: true };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];

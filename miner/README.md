@@ -37,7 +37,7 @@ Options:
 | `--address` | — | Wallet address to mine to (required unless `--ui` or `--generate-wallet`) |
 | `--api` | `http://localhost:4000` | Chain API base URL |
 | `--workers` | number of CPU cores | Hashing threads |
-| `--interval` | `4000` | How often (ms) to poll for a fresh challenge — keep this well under the server's `AUTO_MINE_INTERVAL_MS` epoch length, or shares get mined against a seed the server has already rotated away from |
+| `--interval` | `4000` | How often (ms) to poll for a fresh challenge — the seed now rotates the instant a block is found (event-driven, not a fixed epoch), so this just bounds how long you might hash against a just-superseded seed |
 | `--ui` | — | Start the local web control panel instead of mining immediately |
 | `--port` | `5178` | Port for `--ui` |
 | `--generate-wallet` | — | Print a new wallet and exit |

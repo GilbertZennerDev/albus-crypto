@@ -36,7 +36,11 @@ export const albusApi = {
       body: JSON.stringify({ address, nonce }),
     }),
   supply: () =>
-    request<{ circulatingSupply: number; maxSupply: number; currentBlockReward: number; blocksUntilNextHalving: number }>(
-      "/supply",
-    ),
+    request<{
+      circulatingSupply: number;
+      maxSupply: number;
+      currentBlockReward: number;
+      blocksUntilNextHalving: number;
+      currentDifficulty: number;
+    }>("/supply"),
 };

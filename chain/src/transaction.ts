@@ -10,6 +10,10 @@ export interface Transaction {
   amount: number;
   timestamp: number;
   signature: string | null;
+  /** Fee owed by the sender, computed server-side at submission time (not part of the signed payload). */
+  fee?: number;
+  /** Marks a coinbase tx as redistributed transaction fees rather than newly minted block subsidy, so supply accounting doesn't double-count it as "mined". */
+  isFeeReward?: boolean;
 }
 
 export function hashTransactionFields(
@@ -22,10 +26,10 @@ export function hashTransactionFields(
   return bytesToHex(sha256(utf8ToBytes(payload)));
 }
 
-export function createCoinbaseTransaction(to: string, amount: number): Transaction {
+export function createCoinbaseTransaction(to: string, amount: number, isFeeReward = false): Transaction {
   const timestamp = Date.now();
   const id = hashTransactionFields(null, to, amount, timestamp);
-  return { id, fromPublicKey: null, fromAddress: null, to, amount, timestamp, signature: null };
+  return { id, fromPublicKey: null, fromAddress: null, to, amount, timestamp, signature: null, isFeeReward };
 }
 
 export function createTransaction(

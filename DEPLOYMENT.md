@@ -49,13 +49,25 @@ tar czf /backup/albus-chain-data.tgz -C /data .`).
 
 Set in `.env` (see `.env.example`):
 
-- `MINING_DIFFICULTY` — leading hex zeros required for a real block. Higher
-  = slower chain growth.
-- `SHARE_DIFFICULTY` — leading hex zeros required for a pool share. Lower =
-  contributors earn shares faster (more generous payouts, less real proof of
-  work per share).
-- `AUTO_MINE_INTERVAL_MS` — epoch length: how often a block is mined and the
-  reward is split across that epoch's contributors.
+- `INITIAL_BLOCK_DIFFICULTY` — starting leading hex zeros required to
+  actually find a block. This adjusts itself automatically afterward (see
+  retargeting below) — a block is now produced the instant someone's real
+  proof-of-work clears it, not on a timer.
+- `SHARE_DIFFICULTY` — leading hex zeros required for a pool share (the
+  anti-Sybil/accounting bar, always ≤ the real block difficulty). Lower =
+  contributors earn shares (and thus reward-split credit) faster.
+- `TARGET_BLOCK_TIME_MS` / `RETARGET_INTERVAL_BLOCKS` — every
+  `RETARGET_INTERVAL_BLOCKS` blocks, difficulty moves by one hex nibble
+  (16x) if the real average block time drifted far from
+  `TARGET_BLOCK_TIME_MS`, keeping mining meaningfully hard as real network
+  hashrate changes.
+- `FEE_RATE` — fraction of each transaction's amount charged as a fee, paid
+  to whichever miners find the block that confirms it (on top of the block
+  reward) — gives mining a permanent revenue source as halvings shrink the
+  block subsidy.
+- `FALLBACK_MINE_INTERVAL_MS` — escape hatch only: pays out to the pool
+  wallet so pending transactions still eventually confirm if literally
+  nobody is mining. Not the normal way blocks are produced.
 
 ## Why single-node
 

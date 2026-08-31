@@ -1,7 +1,7 @@
-import { randomBytes } from "node:crypto";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 import { readJson, writeJsonAtomic } from "./storage.js";
+import { hashMeetsDifficulty } from "./block.js";
 
 const SHARES_FILE = process.env.SHARES_DATA_FILE ?? "data/shares.json";
 export const SHARE_DIFFICULTY = Number(process.env.SHARE_DIFFICULTY ?? 4);
@@ -29,10 +29,22 @@ interface ShareState {
   seenNonces: string[];
 }
 
-function newSeed(): string {
-  return bytesToHex(randomBytes(16));
+export interface ShareResult {
+  ok: boolean;
+  error?: string;
+  totalShares?: number;
+  /** True when this share's hash also clears the real block-finding difficulty. */
+  blockFound?: boolean;
+  nonce?: string;
 }
 
+/**
+ * Anti-Sybil share accounting for whatever job the blockchain currently
+ * publishes. The pool no longer generates its own seed (see
+ * Blockchain.getCurrentJob) — a share here IS a candidate block
+ * proof-of-work, just checked against a lower bar for fairness/anti-spam
+ * accounting before also being checked against the real block difficulty.
+ */
 export class MiningPool {
   private state: ShareState;
   // Dedup set for the current epoch — kept separate from state.seenNonces
@@ -42,7 +54,7 @@ export class MiningPool {
   private seenNonces: Set<string>;
 
   constructor() {
-    this.state = readJson<ShareState>(SHARES_FILE) ?? { seed: newSeed(), shares: {}, ipShares: {}, seenNonces: [] };
+    this.state = readJson<ShareState>(SHARES_FILE) ?? { seed: "", shares: {}, ipShares: {}, seenNonces: [] };
     this.seenNonces = new Set(this.state.seenNonces);
   }
 
@@ -59,19 +71,27 @@ export class MiningPool {
     writeJsonAtomic(SHARES_FILE, this.state);
   }
 
-  getChallenge(): { seed: string; difficulty: number } {
-    return { seed: this.state.seed, difficulty: SHARE_DIFFICULTY };
+  getSeed(): string {
+    return this.state.seed;
+  }
+
+  getChallenge(difficulty: number): { seed: string; difficulty: number } {
+    return { seed: this.state.seed, difficulty: SHARE_DIFFICULTY < difficulty ? SHARE_DIFFICULTY : difficulty };
   }
 
   getShares(): Record<string, number> {
     return this.state.shares;
   }
 
-  submitShare(
-    address: string,
-    nonce: string,
-    ip: string,
-  ): { ok: true; totalShares: number } | { ok: false; error: string } {
+  /** Called whenever the chain head/mempool changes and a new job is published — starts a fresh epoch. */
+  setJob(seed: string): void {
+    if (seed === this.state.seed) return;
+    this.state = { seed, shares: {}, ipShares: {}, seenNonces: [] };
+    this.seenNonces = new Set();
+    this.persist();
+  }
+
+  submitShare(address: string, nonce: string, ip: string, blockDifficulty: number): ShareResult {
     if (typeof address !== "string" || !/^albus1[0-9a-f]{40}$/.test(address)) {
       return { ok: false, error: "invalid address" };
     }
@@ -85,14 +105,15 @@ export class MiningPool {
     if (this.seenNonces.has(key)) return { ok: false, error: "duplicate share" };
 
     const hash = bytesToHex(sha256(utf8ToBytes(`${this.state.seed}|${address}|${nonce}`)));
-    if (!hash.startsWith("0".repeat(SHARE_DIFFICULTY))) {
+    if (!hashMeetsDifficulty(hash, SHARE_DIFFICULTY)) {
       return { ok: false, error: "share does not meet difficulty" };
     }
 
     this.state.shares[address] = (this.state.shares[address] ?? 0) + 1;
     this.state.ipShares[ip] = (this.state.ipShares[ip] ?? 0) + 1;
     this.seenNonces.add(key);
-    return { ok: true, totalShares: this.state.shares[address] };
+    const blockFound = hashMeetsDifficulty(hash, blockDifficulty);
+    return { ok: true, totalShares: this.state.shares[address], blockFound, nonce };
   }
 
   /**
@@ -103,27 +124,31 @@ export class MiningPool {
    * correctness and fairness (every real share still counted) are
    * unchanged; only the request count drops.
    */
-  submitShares(address: string, nonces: string[], ip: string): { accepted: number; rejected: number; lastError?: string } {
+  submitShares(
+    address: string,
+    nonces: string[],
+    ip: string,
+    blockDifficulty: number,
+  ): { accepted: number; rejected: number; lastError?: string; blockFoundNonce?: string } {
     let accepted = 0;
     let rejected = 0;
     let lastError: string | undefined;
+    let blockFoundNonce: string | undefined;
     for (const nonce of nonces) {
-      const result = this.submitShare(address, nonce, ip);
-      if (result.ok) accepted++;
-      else {
+      const result = this.submitShare(address, nonce, ip, blockDifficulty);
+      if (result.ok) {
+        accepted++;
+        if (result.blockFound && !blockFoundNonce) blockFoundNonce = result.nonce;
+      } else {
         rejected++;
         lastError = result.error;
       }
     }
-    return { accepted, rejected, lastError };
+    return { accepted, rejected, lastError, blockFoundNonce };
   }
 
-  /** Snapshot the current epoch's shares and start a fresh one (new seed, empty tally). */
-  rotateEpoch(): Record<string, number> {
-    const snapshot = this.state.shares;
-    this.state = { seed: newSeed(), shares: {}, ipShares: {}, seenNonces: [] };
-    this.seenNonces = new Set();
-    this.persist();
-    return snapshot;
+  /** Snapshot the current epoch's shares (used right before a block is finalized and a new job starts). */
+  snapshotShares(): Record<string, number> {
+    return this.state.shares;
   }
 }

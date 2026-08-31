@@ -5,7 +5,11 @@ import { generateKeyPair } from "./wallet.js";
 import { MiningPool, MAX_BATCH_SIZE } from "./mining-pool.js";
 
 const PORT = Number(process.env.PORT ?? 4000);
-const AUTO_MINE_INTERVAL_MS = Number(process.env.AUTO_MINE_INTERVAL_MS ?? 20_000);
+// Escape hatch only: pays out to the faucet address so pending transactions
+// still eventually confirm if literally nobody is mining. Real blocks are
+// produced the instant a share clears the actual network difficulty (see
+// /mining/submit-batch below) — not on a fixed schedule.
+const FALLBACK_MINE_INTERVAL_MS = Number(process.env.FALLBACK_MINE_INTERVAL_MS ?? 5 * 60_000);
 const CHAIN_NAME = "Albus";
 const CHAIN_SYMBOL = "ALB";
 
@@ -17,6 +21,23 @@ const app = express();
 app.set("trust proxy", true);
 app.use(cors());
 app.use(express.json());
+
+// Guards against two near-simultaneous qualifying shares both trying to
+// finalize the same job.
+let finalizing = false;
+
+function tryFinalizeBlock(seed: string, proofAddress: string, nonce: string): void {
+  if (finalizing) return;
+  finalizing = true;
+  try {
+    const block = chain.submitProof(seed, proofAddress, nonce, pool.snapshotShares(), chain.faucet.address);
+    if (block) pool.setJob(chain.getCurrentJob().seed);
+  } catch (err) {
+    console.error("block finalization failed", err);
+  } finally {
+    finalizing = false;
+  }
+}
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, name: CHAIN_NAME, symbol: CHAIN_SYMBOL, height: chain.getLatestBlock().index });
@@ -66,13 +87,16 @@ app.post("/faucet", (req, res) => {
   res.status(201).json({ ok: true, amount: capped });
 });
 
-// Proof-of-work "lend your processing power" pool: any number of browsers hash
-// against the current challenge; a verified share is real work, dedup'd and
-// checked server-side. Each epoch (AUTO_MINE_INTERVAL_MS) the shares tally is
-// snapshotted, a block is mined, and the block reward is split across that
-// epoch's contributors proportional to shares submitted.
+// Proof-of-work "lend your processing power" pool: any number of browsers/CLI
+// miners hash against the current job; a verified share is real work, dedup'd
+// and checked server-side. Shares are also checked against the real
+// block-finding difficulty — the instant one clears it, that exact proof
+// finalizes a real block (see tryFinalizeBlock), and the reward + fees are
+// split across the epoch's contributors proportional to shares submitted.
 app.get("/mining/challenge", (_req, res) => {
-  res.json(pool.getChallenge());
+  const job = chain.getCurrentJob();
+  pool.setJob(job.seed);
+  res.json(pool.getChallenge(job.difficulty));
 });
 
 app.get("/mining/shares", (_req, res) => {
@@ -81,8 +105,9 @@ app.get("/mining/shares", (_req, res) => {
 
 app.post("/mining/submit", (req, res) => {
   const { address, nonce } = req.body ?? {};
-  const result = pool.submitShare(address, nonce, req.ip ?? "unknown");
+  const result = pool.submitShare(address, nonce, req.ip ?? "unknown", chain.getCurrentDifficulty());
   if (!result.ok) return res.status(400).json({ error: result.error });
+  if (result.blockFound) tryFinalizeBlock(pool.getSeed(), address, nonce);
   res.status(201).json(result);
 });
 
@@ -94,7 +119,9 @@ app.post("/mining/submit-batch", (req, res) => {
   if (!Array.isArray(nonces) || nonces.length === 0 || nonces.length > MAX_BATCH_SIZE) {
     return res.status(400).json({ error: `nonces must be a non-empty array of at most ${MAX_BATCH_SIZE}` });
   }
-  const result = pool.submitShares(address, nonces, req.ip ?? "unknown");
+  const seedBeforeBatch = pool.getSeed();
+  const result = pool.submitShares(address, nonces, req.ip ?? "unknown", chain.getCurrentDifficulty());
+  if (result.blockFoundNonce) tryFinalizeBlock(seedBeforeBatch, address, result.blockFoundNonce);
   res.status(201).json(result);
 });
 
@@ -102,13 +129,13 @@ app.listen(PORT, () => {
   console.log(`Albus chain API listening on :${PORT}`);
 });
 
-if (AUTO_MINE_INTERVAL_MS > 0) {
+if (FALLBACK_MINE_INTERVAL_MS > 0) {
   setInterval(() => {
-    const snapshot = pool.rotateEpoch();
     try {
-      chain.mineEpoch(snapshot, chain.faucet.address);
+      const block = chain.mineFallbackBlock(chain.faucet.address);
+      if (block) pool.setJob(chain.getCurrentJob().seed);
     } catch (err) {
-      console.error("epoch mining failed", err);
+      console.error("fallback mining failed", err);
     }
-  }, AUTO_MINE_INTERVAL_MS);
+  }, FALLBACK_MINE_INTERVAL_MS);
 }

@@ -52,6 +52,7 @@ function SupplyPanel({ supply }: { supply: SupplyInfo | null }) {
       <div className="mt-3 flex gap-6 text-sm text-white/60">
         <span>Block reward: <strong className="text-white">{formatAlb(supply.currentBlockReward)}</strong> ALB</span>
         <span>Next halving in <strong className="text-white">{supply.blocksUntilNextHalving.toLocaleString()}</strong> blocks</span>
+        <span>Difficulty: <strong className="text-white">{supply.currentDifficulty}</strong></span>
       </div>
     </Panel>
   );

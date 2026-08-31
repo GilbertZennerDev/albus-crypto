@@ -1,4 +1,6 @@
-import { createGenesisBlock, mineBlock, isBlockHashValid, type Block } from "./block.js";
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
+import { createGenesisBlock, buildProvenBlock, isBlockHashValid, type Block } from "./block.js";
 import {
   createCoinbaseTransaction,
   createTransaction,
@@ -11,9 +13,9 @@ import { readJson, writeJsonAtomic } from "./storage.js";
 
 const CHAIN_FILE = process.env.CHAIN_DATA_FILE ?? "data/chain.json";
 const FAUCET_FILE = process.env.FAUCET_DATA_FILE ?? "data/faucet.json";
+const DIFFICULTY_FILE = process.env.DIFFICULTY_DATA_FILE ?? "data/difficulty.json";
 
 const GENESIS_SUPPLY = 1_000_000;
-const DIFFICULTY = Number(process.env.MINING_DIFFICULTY ?? 4);
 const MAX_TX_PER_BLOCK = Number(process.env.MAX_TX_PER_BLOCK ?? 50);
 
 // Bitcoin-style halving schedule: the block reward halves every
@@ -23,13 +25,25 @@ const MAX_TX_PER_BLOCK = Number(process.env.MAX_TX_PER_BLOCK ?? 50);
 // Reward is intentionally left as an exact fraction (no rounding) so the
 // halving series can continue smoothly for hundreds of halvings — like
 // Bitcoin's satoshi-denominated tail, just expressed as a decimal instead
-// of an integer subunit. 200 reward * 50,000 blocks * 2 (geometric sum) =
-// 20,000,000 ALB minted under this schedule, on top of the ~1,000,000+ that
-// already exists from genesis and pre-halving blocks — landing close to a
-// deliberately Bitcoin-echoing ~21,000,000 total.
+// of an integer subunit.
 const INITIAL_BLOCK_REWARD = Number(process.env.INITIAL_BLOCK_REWARD ?? 200);
 const HALVING_INTERVAL_BLOCKS = Number(process.env.HALVING_INTERVAL_BLOCKS ?? 50_000);
 export const MAX_SUPPLY = 21_000_000;
+
+// Miners have no revenue once halvings shrink the block subsidy toward zero —
+// a flat percentage transaction fee gives mining a permanent reason to keep
+// running, same as Bitcoin's fee market is meant to take over long-term.
+const FEE_RATE = Number(process.env.FEE_RATE ?? 0.005);
+
+// Difficulty is "number of required leading hex-zero nibbles" rather than a
+// continuous numeric target — each +1 is a 16x jump, coarser than Bitcoin's
+// smooth retargeting, but it reuses the existing string-prefix hash check
+// everywhere (miners, pool, block validation) with no protocol changes.
+const INITIAL_BLOCK_DIFFICULTY = Number(process.env.INITIAL_BLOCK_DIFFICULTY ?? 5);
+const MIN_DIFFICULTY = 1;
+const MAX_DIFFICULTY = 10;
+const TARGET_BLOCK_TIME_MS = Number(process.env.TARGET_BLOCK_TIME_MS ?? 30_000);
+const RETARGET_INTERVAL_BLOCKS = Number(process.env.RETARGET_INTERVAL_BLOCKS ?? 20);
 
 export function getBlockReward(height: number): number {
   const halvings = Math.floor(height / HALVING_INTERVAL_BLOCKS);
@@ -40,10 +54,26 @@ interface ChainFile {
   chain: Block[];
 }
 
+interface DifficultyFile {
+  difficulty: number;
+  /** Timestamp of the block at the start of the current retarget window, for measuring actual elapsed time. */
+  windowStartTimestamp: number;
+  windowStartHeight: number;
+}
+
+export interface MiningJob {
+  seed: string;
+  index: number;
+  previousHash: string;
+  transactions: Transaction[];
+  difficulty: number;
+}
+
 export class Blockchain {
   private chain: Block[];
   private mempool: Transaction[] = [];
   readonly faucet: KeyPair;
+  private difficultyState: DifficultyFile;
 
   constructor() {
     let faucet = readJson<KeyPair>(FAUCET_FILE);
@@ -61,10 +91,21 @@ export class Blockchain {
       this.chain = [createGenesisBlock(genesisTx)];
       this.persist();
     }
+
+    this.difficultyState =
+      readJson<DifficultyFile>(DIFFICULTY_FILE) ?? {
+        difficulty: INITIAL_BLOCK_DIFFICULTY,
+        windowStartTimestamp: this.getLatestBlock().timestamp,
+        windowStartHeight: this.getLatestBlock().index,
+      };
   }
 
   private persist(): void {
     writeJsonAtomic(CHAIN_FILE, { chain: this.chain } satisfies ChainFile);
+  }
+
+  private persistDifficulty(): void {
+    writeJsonAtomic(DIFFICULTY_FILE, this.difficultyState);
   }
 
   getChain(): Block[] {
@@ -91,7 +132,7 @@ export class Blockchain {
     for (const block of this.chain) {
       for (const tx of block.transactions) {
         if (tx.to === address) balance += tx.amount;
-        if (tx.fromAddress === address) balance -= tx.amount;
+        if (tx.fromAddress === address) balance -= tx.amount + (tx.fee ?? 0);
       }
     }
     return balance;
@@ -100,7 +141,7 @@ export class Blockchain {
   private pendingOutgoing(address: string): number {
     return this.mempool
       .filter((tx) => tx.fromAddress === address)
-      .reduce((sum, tx) => sum + tx.amount, 0);
+      .reduce((sum, tx) => sum + tx.amount + (tx.fee ?? 0), 0);
   }
 
   submitTransaction(tx: Transaction): { ok: true } | { ok: false; error: string } {
@@ -110,8 +151,10 @@ export class Blockchain {
       return { ok: false, error: "duplicate transaction" };
     }
     const address = tx.fromAddress as string;
+    const fee = tx.amount * FEE_RATE;
     const available = this.getBalance(address) - this.pendingOutgoing(address);
-    if (tx.amount > available) return { ok: false, error: "insufficient balance" };
+    if (tx.amount + fee > available) return { ok: false, error: "insufficient balance" };
+    tx.fee = fee;
     this.mempool.push(tx);
     return { ok: true };
   }
@@ -121,43 +164,136 @@ export class Blockchain {
     return this.submitTransaction(tx);
   }
 
+  getCurrentDifficulty(): number {
+    return this.difficultyState.difficulty;
+  }
+
   /**
-   * Mines one block, splitting the block reward across this epoch's proof-of-work
-   * contributors proportional to verified shares. Falls back to `fallbackAddress`
-   * (the pool wallet) when nobody contributed shares this epoch, so the chain still
-   * makes progress on pending transactions.
+   * Computes the job miners currently hash against — real, since it's
+   * derived directly from the actual next block's content (previous hash,
+   * height, and the exact transactions that would be included), rather than
+   * an independent puzzle. A share whose hash also clears the current
+   * difficulty against this seed IS a valid proof for this exact block.
    */
-  mineEpoch(shares: Record<string, number>, fallbackAddress: string): Block | null {
+  getCurrentJob(): MiningJob {
+    const previous = this.getLatestBlock();
+    const index = previous.index + 1;
+    const transactions = this.mempool.slice(0, MAX_TX_PER_BLOCK);
+    const txIds = transactions
+      .map((t) => t.id)
+      .sort()
+      .join(",");
+    const seed = bytesToHex(sha256(utf8ToBytes(`${previous.hash}|${index}|${txIds}`)));
+    return { seed, index, previousHash: previous.hash, transactions, difficulty: this.difficultyState.difficulty };
+  }
+
+  /**
+   * Every RETARGET_INTERVAL_BLOCKS, compare real elapsed time against
+   * TARGET_BLOCK_TIME_MS and adjust difficulty by one nibble (16x) in the
+   * appropriate direction — coarse but keeps mining meaningfully hard as
+   * real network hashrate changes, instead of a difficulty that never moves.
+   */
+  private maybeRetarget(newHeight: number): void {
+    const blocksInWindow = newHeight - this.difficultyState.windowStartHeight;
+    if (blocksInWindow < RETARGET_INTERVAL_BLOCKS) return;
+    const elapsed = this.getLatestBlock().timestamp - this.difficultyState.windowStartTimestamp;
+    const expected = TARGET_BLOCK_TIME_MS * blocksInWindow;
+    if (elapsed < expected / 2) {
+      this.difficultyState.difficulty = Math.min(MAX_DIFFICULTY, this.difficultyState.difficulty + 1);
+    } else if (elapsed > expected * 2) {
+      this.difficultyState.difficulty = Math.max(MIN_DIFFICULTY, this.difficultyState.difficulty - 1);
+    }
+    this.difficultyState.windowStartHeight = newHeight;
+    this.difficultyState.windowStartTimestamp = this.getLatestBlock().timestamp;
+    this.persistDifficulty();
+  }
+
+  /**
+   * Splits `pool` proportionally across `contributors` (by share count),
+   * minting one coinbase tx per contributor. The last contributor gets the
+   * exact remainder so amounts sum to `pool` precisely rather than drifting
+   * from float division. Not floored: a small pool split across many
+   * contributors can be a fraction of a fraction, and integer-rounding that
+   * to 0 would unfairly zero out small-but-real contributions.
+   */
+  private splitProportional(
+    pool: number,
+    contributors: [string, number][],
+    totalShares: number,
+    isFeeReward: boolean,
+  ): Transaction[] {
+    if (pool <= 0) return [];
+    let distributed = 0;
+    return contributors
+      .map(([address, count], i) => {
+        const isLast = i === contributors.length - 1;
+        const amount = isLast ? pool - distributed : (pool * count) / totalShares;
+        distributed += amount;
+        return createCoinbaseTransaction(address, amount, isFeeReward);
+      })
+      .filter((tx) => tx.amount > 0);
+  }
+
+  /**
+   * Finalizes a block from a proven (seed, proofAddress, nonce) triple. The
+   * proof must match the job currently computable from live chain state —
+   * if the mempool or chain head changed since the job was issued (another
+   * block just landed, or a new transaction arrived), the seed won't match
+   * and this returns null so the caller can just fetch a fresh job instead
+   * of silently mining stale/duplicate content.
+   */
+  submitProof(
+    seed: string,
+    proofAddress: string,
+    nonce: string,
+    shares: Record<string, number>,
+    fallbackAddress: string,
+  ): Block | null {
+    const job = this.getCurrentJob();
+    if (job.seed !== seed) return null;
+
+    const feeTotal = job.transactions.reduce((sum, tx) => sum + (tx.fee ?? 0), 0);
+    const reward = getBlockReward(job.index);
+
     const contributors = Object.entries(shares).filter(([, count]) => count > 0);
     const totalShares = contributors.reduce((sum, [, count]) => sum + count, 0);
-    if (totalShares === 0 && this.mempool.length === 0) return null;
-
-    const toMine = this.mempool.splice(0, MAX_TX_PER_BLOCK);
-    const previous = this.getLatestBlock();
-    const reward = getBlockReward(previous.index + 1);
 
     let rewardTxs: Transaction[];
     if (totalShares > 0) {
-      // Not floored: a halved reward split across many contributors can be a
-      // fraction of a fraction, and integer-rounding that to 0 constantly
-      // would unfairly zero out small-but-real contributions. The last
-      // contributor gets the exact remainder so amounts sum to `reward`
-      // precisely rather than drifting from float division.
-      let distributed = 0;
-      rewardTxs = contributors.map(([address, count], i) => {
-        const isLast = i === contributors.length - 1;
-        const amount = isLast ? reward - distributed : (reward * count) / totalShares;
-        distributed += amount;
-        return createCoinbaseTransaction(address, amount);
-      }).filter((tx) => tx.amount > 0);
-      if (rewardTxs.length === 0) rewardTxs = [createCoinbaseTransaction(fallbackAddress, reward)];
+      rewardTxs = [
+        ...this.splitProportional(reward, contributors, totalShares, false),
+        ...this.splitProportional(feeTotal, contributors, totalShares, true),
+      ];
+      if (rewardTxs.length === 0) rewardTxs = [createCoinbaseTransaction(fallbackAddress, reward + feeTotal)];
     } else {
-      rewardTxs = [createCoinbaseTransaction(fallbackAddress, reward)];
+      rewardTxs = [createCoinbaseTransaction(proofAddress, reward + feeTotal)];
     }
 
-    const transactions = [...rewardTxs, ...toMine];
-    const block = mineBlock(previous.index + 1, transactions, previous.hash, DIFFICULTY);
-    if (!isBlockHashValid(block)) throw new Error("mined block failed self-validation");
+    const transactions = [...rewardTxs, ...job.transactions];
+    const block = buildProvenBlock(job.index, transactions, job.previousHash, job.difficulty, seed, proofAddress, nonce);
+    if (!isBlockHashValid(block)) throw new Error("submitted proof failed self-validation");
+
+    this.mempool.splice(0, job.transactions.length);
+    this.chain.push(block);
+    this.maybeRetarget(block.index);
+    this.persist();
+    return block;
+  }
+
+  /** Fallback path when nobody is mining: pays out to fallbackAddress so pending transactions still eventually confirm. */
+  mineFallbackBlock(fallbackAddress: string): Block | null {
+    if (this.mempool.length === 0) return null;
+    const job = this.getCurrentJob();
+    const reward = getBlockReward(job.index);
+    const feeTotal = job.transactions.reduce((sum, tx) => sum + (tx.fee ?? 0), 0);
+    const rewardTxs = [createCoinbaseTransaction(fallbackAddress, reward + feeTotal)];
+    const transactions = [...rewardTxs, ...job.transactions];
+    // No real proof-of-work was done — this is an explicit, rare escape
+    // hatch (long timer) so the chain doesn't stall forever with zero
+    // miners, not a substitute for real mining. difficulty 0 makes any
+    // nonce/seed pair trivially "valid" for self-check purposes.
+    const block = buildProvenBlock(job.index, transactions, job.previousHash, 0, job.seed, fallbackAddress, "0");
+    this.mempool.splice(0, job.transactions.length);
     this.chain.push(block);
     this.persist();
     return block;
@@ -167,12 +303,21 @@ export class Blockchain {
     let circulatingSupply = 0;
     for (const block of this.chain) {
       for (const tx of block.transactions) {
-        if (tx.fromAddress === null) circulatingSupply += tx.amount; // coinbase: newly minted
+        // Only count genuinely new coinbase mints toward the supply cap —
+        // fee-reward coinbase txs recycle existing money from senders to
+        // miners and must not double-count as newly "mined".
+        if (tx.fromAddress === null && !tx.isFeeReward) circulatingSupply += tx.amount;
       }
     }
     const nextHeight = this.getLatestBlock().index + 1;
     const currentReward = getBlockReward(nextHeight);
     const blocksUntilNextHalving = HALVING_INTERVAL_BLOCKS - (nextHeight % HALVING_INTERVAL_BLOCKS);
-    return { circulatingSupply, maxSupply: MAX_SUPPLY, currentBlockReward: currentReward, blocksUntilNextHalving };
+    return {
+      circulatingSupply,
+      maxSupply: MAX_SUPPLY,
+      currentBlockReward: currentReward,
+      blocksUntilNextHalving,
+      currentDifficulty: this.difficultyState.difficulty,
+    };
   }
 }
