@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { albusApi, type Block } from "./lib/api";
+
+type SupplyInfo = Awaited<ReturnType<typeof albusApi.supply>>;
 import { createSignedTransaction } from "./lib/wallet";
 import { useWallet } from "./lib/useWallet";
 import { useMiner } from "./lib/useMiner";
@@ -7,6 +9,11 @@ import { useMiner } from "./lib/useMiner";
 function short(value: string, n = 10): string {
   if (value.length <= n * 2) return value;
   return `${value.slice(0, n)}…${value.slice(-n)}`;
+}
+
+/** Formats ALB amounts up to 8 decimal places (Bitcoin-style), trimming trailing zeros. */
+function formatAlb(amount: number): string {
+  return amount.toFixed(8).replace(/\.?0+$/, "") || "0";
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
@@ -24,6 +31,29 @@ function StatusBar({ height, mempoolSize }: { height: number | null; mempoolSize
       <span>Height: <strong className="text-white">{height ?? "—"}</strong></span>
       <span>Mempool: <strong className="text-white">{mempoolSize ?? "—"}</strong></span>
     </div>
+  );
+}
+
+function SupplyPanel({ supply }: { supply: SupplyInfo | null }) {
+  if (!supply) return null;
+  const pctMined = Math.min(100, (supply.circulatingSupply / supply.maxSupply) * 100);
+  return (
+    <Panel title="Supply">
+      <div className="mb-2 flex items-baseline justify-between text-sm">
+        <span>
+          <strong className="text-lg text-white">{formatAlb(supply.circulatingSupply)}</strong>
+          <span className="text-white/50"> / {supply.maxSupply.toLocaleString()} ALB mined</span>
+        </span>
+        <span className="text-white/50">{pctMined.toFixed(4)}%</span>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
+        <div className="h-full rounded-full bg-violet-500" style={{ width: `${pctMined}%` }} />
+      </div>
+      <div className="mt-3 flex gap-6 text-sm text-white/60">
+        <span>Block reward: <strong className="text-white">{formatAlb(supply.currentBlockReward)}</strong> ALB</span>
+        <span>Next halving in <strong className="text-white">{supply.blocksUntilNextHalving.toLocaleString()}</strong> blocks</span>
+      </div>
+    </Panel>
   );
 }
 
@@ -95,7 +125,7 @@ function WalletPanel({
         </div>
         <div className="flex items-center justify-between">
           <span className="text-white/50">Balance</span>
-          <span className="text-2xl font-semibold">{balance ?? "…"} <span className="text-sm text-white/50">ALB</span></span>
+          <span className="text-2xl font-semibold">{balance === null ? "…" : formatAlb(balance)} <span className="text-sm text-white/50">ALB</span></span>
         </div>
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
@@ -235,15 +265,17 @@ export default function App() {
   const [chain, setChain] = useState<Block[]>([]);
   const [health, setHealth] = useState<{ height: number } | null>(null);
   const [mempoolSize, setMempoolSize] = useState<number | null>(null);
+  const [supply, setSupply] = useState<SupplyInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const miner = useMiner(wallet?.address);
 
   async function refresh() {
     try {
-      const [h, c, m] = await Promise.all([albusApi.health(), albusApi.chain(), albusApi.mempool()]);
+      const [h, c, m, s] = await Promise.all([albusApi.health(), albusApi.chain(), albusApi.mempool(), albusApi.supply()]);
       setHealth(h);
       setChain(c.chain);
       setMempoolSize(m.length);
+      setSupply(s);
       if (wallet) {
         const b = await albusApi.balance(wallet.address);
         setBalance(b.balance);
@@ -276,10 +308,12 @@ export default function App() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Albus <span className="text-violet-400">ALB</span></h1>
-          <p className="text-sm text-white/50">a small proof-of-work chain, running for real</p>
+          <p className="text-sm text-white/50">a fixed-supply proof-of-work chain, running for real</p>
         </div>
         <StatusBar height={health?.height ?? null} mempoolSize={mempoolSize} />
       </header>
+
+      <SupplyPanel supply={supply} />
 
       <WalletPanel
         wallet={wallet}
@@ -297,7 +331,7 @@ export default function App() {
       <Explorer chain={chain} />
 
       <footer className="pb-4 text-center text-xs text-white/30">
-        Single-node demo chain — proof-of-work, ECDSA-signed transactions, no real value.
+        Single-node demo chain — proof-of-work, ECDSA-signed transactions, halving issuance capped at 21,000,000 ALB.
       </footer>
     </div>
   );

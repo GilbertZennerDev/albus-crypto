@@ -13,9 +13,28 @@ const CHAIN_FILE = process.env.CHAIN_DATA_FILE ?? "data/chain.json";
 const FAUCET_FILE = process.env.FAUCET_DATA_FILE ?? "data/faucet.json";
 
 const GENESIS_SUPPLY = 1_000_000;
-const BLOCK_REWARD = 25;
 const DIFFICULTY = Number(process.env.MINING_DIFFICULTY ?? 4);
 const MAX_TX_PER_BLOCK = Number(process.env.MAX_TX_PER_BLOCK ?? 50);
+
+// Bitcoin-style halving schedule: the block reward halves every
+// HALVING_INTERVAL_BLOCKS, converging on a fixed total supply instead of
+// inflating forever (the original flat 25/block design had no cap at all —
+// this is the single biggest lever for a credible "scarce asset" story).
+// Reward is intentionally left as an exact fraction (no rounding) so the
+// halving series can continue smoothly for hundreds of halvings — like
+// Bitcoin's satoshi-denominated tail, just expressed as a decimal instead
+// of an integer subunit. 200 reward * 50,000 blocks * 2 (geometric sum) =
+// 20,000,000 ALB minted under this schedule, on top of the ~1,000,000+ that
+// already exists from genesis and pre-halving blocks — landing close to a
+// deliberately Bitcoin-echoing ~21,000,000 total.
+const INITIAL_BLOCK_REWARD = Number(process.env.INITIAL_BLOCK_REWARD ?? 200);
+const HALVING_INTERVAL_BLOCKS = Number(process.env.HALVING_INTERVAL_BLOCKS ?? 50_000);
+export const MAX_SUPPLY = 21_000_000;
+
+export function getBlockReward(height: number): number {
+  const halvings = Math.floor(height / HALVING_INTERVAL_BLOCKS);
+  return INITIAL_BLOCK_REWARD / 2 ** halvings;
+}
 
 interface ChainFile {
   chain: Block[];
@@ -114,27 +133,46 @@ export class Blockchain {
     if (totalShares === 0 && this.mempool.length === 0) return null;
 
     const toMine = this.mempool.splice(0, MAX_TX_PER_BLOCK);
+    const previous = this.getLatestBlock();
+    const reward = getBlockReward(previous.index + 1);
 
     let rewardTxs: Transaction[];
     if (totalShares > 0) {
+      // Not floored: a halved reward split across many contributors can be a
+      // fraction of a fraction, and integer-rounding that to 0 constantly
+      // would unfairly zero out small-but-real contributions. The last
+      // contributor gets the exact remainder so amounts sum to `reward`
+      // precisely rather than drifting from float division.
       let distributed = 0;
       rewardTxs = contributors.map(([address, count], i) => {
         const isLast = i === contributors.length - 1;
-        const amount = isLast ? BLOCK_REWARD - distributed : Math.floor((BLOCK_REWARD * count) / totalShares);
+        const amount = isLast ? reward - distributed : (reward * count) / totalShares;
         distributed += amount;
         return createCoinbaseTransaction(address, amount);
       }).filter((tx) => tx.amount > 0);
-      if (rewardTxs.length === 0) rewardTxs = [createCoinbaseTransaction(fallbackAddress, BLOCK_REWARD)];
+      if (rewardTxs.length === 0) rewardTxs = [createCoinbaseTransaction(fallbackAddress, reward)];
     } else {
-      rewardTxs = [createCoinbaseTransaction(fallbackAddress, BLOCK_REWARD)];
+      rewardTxs = [createCoinbaseTransaction(fallbackAddress, reward)];
     }
 
     const transactions = [...rewardTxs, ...toMine];
-    const previous = this.getLatestBlock();
     const block = mineBlock(previous.index + 1, transactions, previous.hash, DIFFICULTY);
     if (!isBlockHashValid(block)) throw new Error("mined block failed self-validation");
     this.chain.push(block);
     this.persist();
     return block;
+  }
+
+  getSupplyInfo() {
+    let circulatingSupply = 0;
+    for (const block of this.chain) {
+      for (const tx of block.transactions) {
+        if (tx.fromAddress === null) circulatingSupply += tx.amount; // coinbase: newly minted
+      }
+    }
+    const nextHeight = this.getLatestBlock().index + 1;
+    const currentReward = getBlockReward(nextHeight);
+    const blocksUntilNextHalving = HALVING_INTERVAL_BLOCKS - (nextHeight % HALVING_INTERVAL_BLOCKS);
+    return { circulatingSupply, maxSupply: MAX_SUPPLY, currentBlockReward: currentReward, blocksUntilNextHalving };
   }
 }

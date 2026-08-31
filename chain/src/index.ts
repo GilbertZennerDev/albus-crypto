@@ -26,6 +26,10 @@ app.get("/chain", (_req, res) => {
   res.json({ length: chain.getChain().length, chain: chain.getChain() });
 });
 
+app.get("/supply", (_req, res) => {
+  res.json(chain.getSupplyInfo());
+});
+
 app.get("/blocks/:hashOrIndex", (req, res) => {
   const block = chain.getBlock(req.params.hashOrIndex);
   if (!block) return res.status(404).json({ error: "block not found" });
