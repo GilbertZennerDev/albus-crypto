@@ -183,7 +183,12 @@ export class Blockchain {
       .map((t) => t.id)
       .sort()
       .join(",");
-    const seed = bytesToHex(sha256(utf8ToBytes(`${previous.hash}|${index}|${txIds}`)));
+    // Truncated to 32 hex chars (128 bits — plenty of collision resistance
+    // for a non-secret job identifier) so the fixed seed|address| prefix
+    // length miners hash against matches what the GPU kernel hardcodes
+    // (see gpu-worker.js) — the old design used a 32-char random seed, and
+    // the GPU kernel's fixed-layout optimization depends on that exact size.
+    const seed = bytesToHex(sha256(utf8ToBytes(`${previous.hash}|${index}|${txIds}`))).slice(0, 32);
     return { seed, index, previousHash: previous.hash, transactions, difficulty: this.difficultyState.difficulty };
   }
 
@@ -196,12 +201,26 @@ export class Blockchain {
   private maybeRetarget(newHeight: number): void {
     const blocksInWindow = newHeight - this.difficultyState.windowStartHeight;
     if (blocksInWindow < RETARGET_INTERVAL_BLOCKS) return;
-    const elapsed = this.getLatestBlock().timestamp - this.difficultyState.windowStartTimestamp;
+    // elapsed floored at 1ms: real hashrate can clear a window in single-digit
+    // milliseconds, and log16(expected/0) would be infinite/NaN.
+    const elapsed = Math.max(1, this.getLatestBlock().timestamp - this.difficultyState.windowStartTimestamp);
     const expected = TARGET_BLOCK_TIME_MS * blocksInWindow;
-    if (elapsed < expected / 2) {
-      this.difficultyState.difficulty = Math.min(MAX_DIFFICULTY, this.difficultyState.difficulty + 1);
-    } else if (elapsed > expected * 2) {
-      this.difficultyState.difficulty = Math.max(MIN_DIFFICULTY, this.difficultyState.difficulty - 1);
+    // Proportional, not a fixed +/-1 nibble per window: a network hashrate
+    // wildly above/below whatever INITIAL_BLOCK_DIFFICULTY guessed would
+    // otherwise take dozens of windows (and mint a full reward every block
+    // along the way) to climb into the right range. Sizing the jump to
+    // log16(expected/elapsed) converges in 1-2 windows regardless of how far
+    // off the starting guess was, at the cost of a larger single jump when
+    // hashrate is far from target (still bounded by MAX_RETARGET_STEP so one
+    // wildly noisy window can't swing difficulty to an extreme).
+    const MAX_RETARGET_STEP = 4;
+    const rawStep = Math.round(Math.log(expected / elapsed) / Math.log(16));
+    const step = Math.max(-MAX_RETARGET_STEP, Math.min(MAX_RETARGET_STEP, rawStep));
+    if (step !== 0) {
+      this.difficultyState.difficulty = Math.max(
+        MIN_DIFFICULTY,
+        Math.min(MAX_DIFFICULTY, this.difficultyState.difficulty + step),
+      );
     }
     this.difficultyState.windowStartHeight = newHeight;
     this.difficultyState.windowStartTimestamp = this.getLatestBlock().timestamp;
