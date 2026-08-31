@@ -55,8 +55,15 @@ export class MinerController {
 
   start(config) {
     if (this.running) throw new Error("already mining — stop first");
-    if (typeof config.address !== "string" || !config.address.startsWith("albus1")) {
-      throw new Error("a valid albus1... address is required");
+    // A real address is always exactly "albus1" (6 chars) + 40 hex chars = 46
+    // total. Checking only the prefix let a truncated/mis-copied address
+    // (e.g. from wrapped terminal output) through, where it would surface
+    // later as a confusing internal GPU-kernel error about byte lengths
+    // instead of a clear message here.
+    if (typeof config.address !== "string" || !/^albus1[0-9a-f]{40}$/.test(config.address)) {
+      throw new Error(
+        `a valid albus1... address is required (expected 46 characters, got ${config.address?.length ?? 0} — check it wasn't truncated when copied)`,
+      );
     }
     const workers = Number(config.workers) || cpus().length;
     if (workers < 1 || workers > cpus().length * 2) {

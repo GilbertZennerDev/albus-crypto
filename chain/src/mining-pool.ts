@@ -70,7 +70,7 @@ export class MiningPool {
     nonce: string,
     ip: string,
   ): { ok: true; totalShares: number } | { ok: false; error: string } {
-    if (typeof address !== "string" || !address.startsWith("albus1")) {
+    if (typeof address !== "string" || !/^albus1[0-9a-f]{40}$/.test(address)) {
       return { ok: false, error: "invalid address" };
     }
     if (typeof nonce !== "string" || nonce.length === 0 || nonce.length > 32) {

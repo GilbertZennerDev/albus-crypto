@@ -48,8 +48,10 @@ export function createTransaction(
   };
 }
 
+const ADDRESS_RE = /^albus1[0-9a-f]{40}$/;
+
 export function isTransactionWellFormed(tx: Transaction): boolean {
-  if (typeof tx.to !== "string" || !tx.to.startsWith("albus1")) return false;
+  if (typeof tx.to !== "string" || !ADDRESS_RE.test(tx.to)) return false;
   if (typeof tx.amount !== "number" || !Number.isFinite(tx.amount) || tx.amount <= 0) return false;
   if (typeof tx.timestamp !== "number") return false;
   return true;
