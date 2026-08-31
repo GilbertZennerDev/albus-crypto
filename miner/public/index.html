@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Albus Miner</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    background: #0b0d12;
+    color: #e6e8ee;
+    font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  }
+  .mono { font-family: ui-monospace, Consolas, monospace; }
+  main {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 40px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  h1 { font-size: 22px; margin: 0; }
+  h1 span { color: #a78bfa; }
+  p.sub { margin: 4px 0 0; color: rgba(230,232,238,0.5); font-size: 14px; }
+  .panel {
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .panel h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: rgba(230,232,238,0.5);
+    margin: 0 0 16px;
+  }
+  label { display: block; font-size: 13px; color: rgba(230,232,238,0.7); margin-bottom: 6px; }
+  input {
+    width: 100%;
+    box-sizing: border-box;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: inherit;
+    font-size: 14px;
+    margin-bottom: 14px;
+  }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  button {
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #start { background: #8b5cf6; color: white; }
+  #start:hover:not(:disabled) { background: #7c3aed; }
+  #stop { background: transparent; border: 1px solid rgba(255,255,255,0.15); color: inherit; }
+  #stop:hover:not(:disabled) { background: rgba(255,255,255,0.05); }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .stat-label { font-size: 12px; color: rgba(230,232,238,0.5); }
+  .stat-value { font-size: 24px; font-weight: 600; margin-top: 2px; }
+  .status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #555;
+    margin-right: 6px;
+  }
+  .status-dot.on { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+  #error { color: #f87171; font-size: 13px; margin-top: 12px; white-space: pre-wrap; }
+  #capped-badge {
+    display: inline-block;
+    font-size: 11px;
+    background: rgba(251,191,36,0.15);
+    color: #fbbf24;
+    border-radius: 6px;
+    padding: 2px 8px;
+    margin-left: 8px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Albus <span>Miner</span></h1>
+    <p class="sub">Controls this machine's local mining process — leave this tab open, or close it, mining keeps running until you press Stop.</p>
+  </div>
+
+  <div class="panel">
+    <h2>Configuration</h2>
+    <label for="address">Wallet address</label>
+    <input id="address" placeholder="albus1..." />
+    <div class="row">
+      <div>
+        <label for="api">Chain API URL</label>
+        <input id="api" />
+      </div>
+      <div>
+        <label for="workers">Threads</label>
+        <input id="workers" type="number" min="1" />
+      </div>
+    </div>
+    <div class="row">
+      <button id="start">Start mining</button>
+      <button id="stop" disabled>Stop</button>
+    </div>
+    <div id="error"></div>
+  </div>
+
+  <div class="panel">
+    <h2><span id="status-dot" class="status-dot"></span>Live stats <span id="capped-badge" hidden>capped this epoch</span></h2>
+    <div class="stats">
+      <div>
+        <div class="stat-label">Hashrate</div>
+        <div class="stat-value mono" id="hashrate">—</div>
+      </div>
+      <div>
+        <div class="stat-label">Threads</div>
+        <div class="stat-value mono" id="workers-display">—</div>
+      </div>
+      <div>
+        <div class="stat-label">Shares accepted</div>
+        <div class="stat-value mono" id="accepted">0</div>
+      </div>
+      <div>
+        <div class="stat-label">Shares rejected</div>
+        <div class="stat-value mono" id="rejected">0</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const STORAGE_KEY = "albus-miner-config";
+
+function formatHashrate(h) {
+  if (h >= 1e6) return (h / 1e6).toFixed(2) + " MH/s";
+  if (h >= 1e3) return (h / 1e3).toFixed(1) + " kH/s";
+  return Math.round(h) + " H/s";
+}
+
+const els = {
+  address: document.getElementById("address"),
+  api: document.getElementById("api"),
+  workers: document.getElementById("workers"),
+  start: document.getElementById("start"),
+  stop: document.getElementById("stop"),
+  error: document.getElementById("error"),
+  statusDot: document.getElementById("status-dot"),
+  cappedBadge: document.getElementById("capped-badge"),
+  hashrate: document.getElementById("hashrate"),
+  workersDisplay: document.getElementById("workers-display"),
+  accepted: document.getElementById("accepted"),
+  rejected: document.getElementById("rejected"),
+};
+
+function loadSavedConfig() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveConfig() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    address: els.address.value,
+    api: els.api.value,
+    workers: els.workers.value,
+  }));
+}
+
+async function init() {
+  const saved = loadSavedConfig();
+  const defaults = await fetch("/api/defaults").then((r) => r.json());
+  els.address.value = saved.address || "";
+  els.api.value = saved.api || defaults.api;
+  els.workers.value = saved.workers || defaults.workers;
+  await refreshStatus();
+  setInterval(refreshStatus, 1000);
+}
+
+function applyStatus(status) {
+  els.statusDot.classList.toggle("on", status.running);
+  els.start.disabled = status.running;
+  els.stop.disabled = !status.running;
+  els.hashrate.textContent = status.running ? formatHashrate(status.hashrate) : "—";
+  els.workersDisplay.textContent = status.workers || "—";
+  els.accepted.textContent = status.sharesAccepted;
+  els.rejected.textContent = status.sharesRejected;
+  els.cappedBadge.hidden = !status.capped;
+  els.error.textContent = status.lastError || "";
+}
+
+async function refreshStatus() {
+  try {
+    const status = await fetch("/api/status").then((r) => r.json());
+    applyStatus(status);
+  } catch {
+    // control server briefly unreachable — next tick retries
+  }
+}
+
+els.start.addEventListener("click", async () => {
+  els.error.textContent = "";
+  saveConfig();
+  const res = await fetch("/api/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      address: els.address.value.trim(),
+      api: els.api.value.trim(),
+      workers: Number(els.workers.value),
+    }),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    els.error.textContent = body.error;
+  } else {
+    applyStatus(body);
+  }
+});
+
+els.stop.addEventListener("click", async () => {
+  const status = await fetch("/api/stop", { method: "POST" }).then((r) => r.json());
+  applyStatus(status);
+});
+
+init();
+</script>
+</body>
+</html>

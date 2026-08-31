@@ -7,6 +7,7 @@
     "albus-miner": "src/index.js"
   },
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "ui": "node src/index.js --ui"
   }
 }
