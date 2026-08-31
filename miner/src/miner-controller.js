@@ -186,13 +186,21 @@ export class MinerController {
       if (code === 0) return;
 
       this.gpuRestartCount++;
-      if (this.gpuRestartCount > MAX_RESTARTS) {
-        this.lastError = `GPU mining disabled after ${MAX_RESTARTS} crashes (last exit code ${code}) — continuing CPU-only`;
-        this.gpuWorker = null;
-        return;
+      const atFloor = this.gpuBatchSize <= GPU_MIN_BATCH;
+      // Giving up outright after MAX_RESTARTS made sense when shrinking the
+      // batch size was expected to eventually find a stable size — but if
+      // it's still crashing at the floor batch size, that's not a batch-size
+      // problem, it's the native GPU binding itself being unstable under
+      // sustained use (confirmed via standalone stress testing). CPU mining
+      // is unaffected either way, so there's no real cost to just retrying
+      // forever at the floor size instead of permanently throwing away
+      // whatever hashrate the GPU manages between crashes.
+      if (!atFloor) {
+        this.gpuBatchSize = Math.max(GPU_MIN_BATCH, Math.floor(this.gpuBatchSize / 2));
+        this.lastError = `GPU mining process crashed (code ${code}), retrying at a smaller batch size (${this.gpuRestartCount}/${MAX_RESTARTS})...`;
+      } else {
+        this.lastError = `GPU mining process crashed (code ${code}) at the smallest batch size — this GPU/driver combination is unstable under sustained load; retrying indefinitely (CPU mining continues unaffected)`;
       }
-      this.gpuBatchSize = Math.max(GPU_MIN_BATCH, Math.floor(this.gpuBatchSize / 2));
-      this.lastError = `GPU mining process crashed (code ${code}), retrying at a smaller batch size (${this.gpuRestartCount}/${MAX_RESTARTS})...`;
       setTimeout(() => {
         if (this.running) this._spawnGpuWorker();
       }, GPU_RESTART_DELAY_MS);
