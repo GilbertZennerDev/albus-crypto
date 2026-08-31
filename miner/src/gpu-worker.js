@@ -71,11 +71,17 @@ async function main() {
   const dawnArgs = process.platform === "win32" ? ["backend=d3d12"] : [];
   let navigator = { gpu: create(dawnArgs) };
   let adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  let selectedBackend = dawnArgs.length > 0 ? "d3d12" : "auto";
   if (!adapter && dawnArgs.length > 0) {
     navigator = { gpu: create([]) };
     adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+    selectedBackend = "auto (d3d12 unavailable)";
   }
   if (!adapter) throw new Error("no WebGPU adapter available");
+  // Printed once per (re)start so it's obvious from the miner's own log
+  // output — not something to infer or guess — which backend a given run
+  // actually used, especially useful after a code update meant to change it.
+  console.error(`[gpu-worker] backend: ${selectedBackend}, adapter: ${adapter.info?.description || adapter.info?.vendor || "unknown"}`);
   const device = await adapter.requestDevice();
 
   // A lost device (driver reset/TDR, out-of-memory, etc.) turns further GPU
