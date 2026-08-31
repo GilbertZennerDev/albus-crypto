@@ -25,7 +25,14 @@ const parentPort = {
 // correlate with instability in this Node WebGPU binding. MinerController
 // shrinks this (via env var) on each auto-restart after a crash, so a card
 // that can't sustain the default settles at whatever batch size it can.
-const WORKGROUP_SIZE = 256;
+// Kept in sync with sha256.wgsl.js's @workgroup_size — deliberately small.
+// The kernel has no shared memory or barriers (each thread is fully
+// independent), so this is purely a GPU scheduling granularity knob, not a
+// correctness concern. Windows compute-shader driver crashes are reported
+// to correlate with larger workgroup sizes; worth trying smaller given the
+// GPU crashes documented in miner-controller.js persist even with the most
+// stable backend (d3d12) and the smallest dispatch batch size.
+const WORKGROUP_SIZE = 64;
 const THREADS_PER_DISPATCH = Number(process.env.GPU_THREADS_PER_DISPATCH) || 2_097_152;
 
 let baseNonce = 0;

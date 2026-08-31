@@ -63,7 +63,7 @@ fn leading_zero_nibbles(h: array<u32, 8>) -> u32 {
   return total;
 }
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let nonce = params.base_nonce + gid.x;
 
