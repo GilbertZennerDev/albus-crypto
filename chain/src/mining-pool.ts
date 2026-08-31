@@ -98,9 +98,6 @@ export class MiningPool {
     if (typeof nonce !== "string" || nonce.length === 0 || nonce.length > 32) {
       return { ok: false, error: "invalid nonce" };
     }
-    if ((this.state.ipShares[ip] ?? 0) >= MAX_SHARES_PER_IP_PER_EPOCH) {
-      return { ok: false, error: "share limit reached for this epoch" };
-    }
     const key = `${address}:${nonce}`;
     if (this.seenNonces.has(key)) return { ok: false, error: "duplicate share" };
 
@@ -109,10 +106,20 @@ export class MiningPool {
       return { ok: false, error: "share does not meet difficulty" };
     }
 
+    // The IP cap only guards against cheaply-faked low-bar shares (Sybil
+    // accounting padding) — a share that also clears the real, much harder
+    // block difficulty is genuine rare proof-of-work and must never be
+    // dropped for being "over quota", or a capped dominant miner could stall
+    // the whole chain (no share through means no block through) until the
+    // fallback timer eventually resets the epoch.
+    const blockFound = hashMeetsDifficulty(hash, blockDifficulty);
+    if (!blockFound && (this.state.ipShares[ip] ?? 0) >= MAX_SHARES_PER_IP_PER_EPOCH) {
+      return { ok: false, error: "share limit reached for this epoch" };
+    }
+
     this.state.shares[address] = (this.state.shares[address] ?? 0) + 1;
     this.state.ipShares[ip] = (this.state.ipShares[ip] ?? 0) + 1;
     this.seenNonces.add(key);
-    const blockFound = hashMeetsDifficulty(hash, blockDifficulty);
     return { ok: true, totalShares: this.state.shares[address], blockFound, nonce };
   }
 
