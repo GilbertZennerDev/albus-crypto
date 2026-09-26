@@ -1,0 +1,23 @@
+# Read-only, operator-managed allowlist of miner profiles.
+#
+# The central API may reference a profile_id in a desired-state command, but
+# it can NEVER supply or modify a command_template, pool endpoint, wallet
+# address, or any flag. Only entries physically present in this file, on the
+# worker's own disk, can ever be executed. Copy to profiles.yaml and edit for
+# your hardware before deploying.
+
+profiles:
+  - id: demo-profile-1
+    enabled: true
+    miner_kind: placeholder
+    pool_ref: pool-main-1
+    account_ref: account-operator-1
+    max_gpus: 1
+    allowed_gpu_uuids:
+      - GPU-EXAMPLE-UUID
+    # Fixed argv list. Never string-interpolated, never shell-evaluated, and
+    # never touched by anything the API sends — see scripts/miner-wrapper.
+    command_template:
+      - /usr/local/bin/miner-wrapper
+      - --profile
+      - demo-profile-1

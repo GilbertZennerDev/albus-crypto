@@ -1,0 +1,4 @@
+{
+  "_comment": "Mounted read-only into the worker container. Maps key_id -> base64-encoded raw 32-byte Ed25519 public key. Rotate by adding a new key_id here and updating command signers before removing an old one (see docs/operations.md).",
+  "main-2026-01": "GQnfe9hmLxuV0rUHFx0qNZx+L5JRhCE0u2wC9OlBbh8="
+}

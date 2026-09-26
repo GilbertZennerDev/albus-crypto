@@ -1,0 +1,76 @@
+# Local worker deployment. Runs only on operator-controlled hardware with an NVIDIA GPU.
+#
+# GPU access notes: `nvidia-smi` inside the container talks to the GPU via the NVIDIA Container
+# Toolkit runtime (`--gpus` / the `deploy.resources.reservations.devices` block below), which
+# requires the toolkit to be installed on the host — see docs/deployment.md. No raw GPU device
+# files are bind-mounted directly; the toolkit runtime manages that.
+#
+# The miner sidecar is commented out and disabled by default (use_mock=True is hardcoded in
+# app/main.py) — an operator enabling a real miner uncomments it and follows README.md's
+# "Integrating a real miner" section, including tightening its network policy further.
+
+services:
+  worker:
+    build: .
+    image: albus-gpu-worker:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - ./config/public-keys.json:/app/config/public-keys.json:ro
+      - ./profiles.yaml:/app/config/profiles.yaml:ro
+      - worker_data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # No privileged mode, no Docker socket, no host networking.
+    network_mode: bridge
+    ports: []  # nothing published — the local endpoints bind to 127.0.0.1 *inside* the container
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256m
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9477/healthz', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # --- Miner sidecar (operator-managed, disabled by default) ---
+  # miner:
+  #   build: .
+  #   restart: unless-stopped
+  #   read_only: true
+  #   tmpfs:
+  #     - /tmp:size=16m,mode=1777
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   cap_drop:
+  #     - ALL
+  #   # Document the network allowlist limitation explicitly: standard Docker bridge networking
+  #   # cannot itself restrict which hostnames/ports a container may reach — that requires an
+  #   # external firewall/egress-proxy rule (e.g. an iptables-based egress allowlist, or a
+  #   # sidecar proxy that only forwards to the configured pool host:port). This compose file
+  #   # does not implement that network-level enforcement; enforce it at the host/network layer
+  #   # before pointing this at a real pool.
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+
+volumes:
+  worker_data:

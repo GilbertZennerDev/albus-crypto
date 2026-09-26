@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Narrow, allowlisted entry point for launching a miner process.
+#
+# This script accepts EXACTLY ONE argument shape: `--profile <profile-id>`.
+# It never accepts arbitrary flags, pool URLs, wallet addresses, or file
+# paths from a caller — those all come from the operator-managed
+# profiles.yaml on this host, never from the network or from MinerController
+# forwarding anything it received from the central API.
+#
+# This is a placeholder: it does not bundle or download a real miner binary.
+# An operator integrating a real miner replaces the `exec` line below with a
+# fixed invocation of their chosen, locally-installed miner binary using
+# only values read from this profile's own section of profiles.yaml — never
+# values passed in as extra arguments to this script.
+set -euo pipefail
+
+if [[ "$#" -ne 2 || "$1" != "--profile" ]]; then
+  echo "usage: miner-wrapper --profile <profile-id>" >&2
+  exit 64
+fi
+
+profile_id="$2"
+
+# Defense in depth: even though MinerController already validates profile_id
+# against the allowlist before ever invoking this script, re-validate the
+# shape here too, so this script is safe to invoke directly by a human
+# operator as well.
+if [[ ! "$profile_id" =~ ^[a-zA-Z0-9_-]{1,128}$ ]]; then
+  echo "rejected: profile id has an invalid shape" >&2
+  exit 65
+fi
+
+echo "[miner-wrapper] would start miner for profile '${profile_id}' here." >&2
+echo "[miner-wrapper] this is a placeholder — see README.md 'Integrating a real miner'." >&2
+
+# Placeholder "miner": idles so MinerController's process-lifecycle handling
+# (start/stop/pause/resume, unexpected-exit detection, restart limits) has a
+# real child process to manage end to end without a real mining binary.
+exec sleep infinity

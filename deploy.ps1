@@ -15,8 +15,6 @@ $ServerHost  = "89.167.25.230"
 $ServerPath  = "/opt/albus-crypto"
 $ChainImage  = "albus-chain:latest"
 $WebImage    = "albus-web:latest"
-$ChainTar    = "albus-chain.tar"
-$WebTar      = "albus-web.tar"
 $EnvFile     = ".env"
 
 function Invoke-Step {
@@ -50,28 +48,20 @@ if (-not $envVars.ContainsKey("VITE_ALBUS_API_URL") -or [string]::IsNullOrWhiteS
 Invoke-Step "Pulling latest code" { git pull }
 
 Invoke-Step "Building chain image" {
-    docker build -t $ChainImage ./chain
+    # --pull refreshes base layers so a stale local cache doesn't silently
+    # skip security patches.
+    docker build --pull -t $ChainImage ./chain
 }
 Invoke-Step "Building web image" {
-    docker build --build-arg VITE_ALBUS_API_URL=$($envVars["VITE_ALBUS_API_URL"]) -t $WebImage ./web
+    docker build --pull --build-arg VITE_ALBUS_API_URL=$($envVars["VITE_ALBUS_API_URL"]) -t $WebImage ./web
 }
 
-Invoke-Step "Saving images to tar" {
-    docker save -o $ChainTar $ChainImage
-    docker save -o $WebTar $WebImage
-}
-Invoke-Step "Copying to server" {
-    scp $ChainTar $WebTar "${ServerUser}@${ServerHost}:${ServerPath}/"
-}
-Invoke-Step "Loading images and restarting containers on server" {
-    ssh "${ServerUser}@${ServerHost}" "cd $ServerPath && git pull && docker load -i $ChainTar && docker load -i $WebTar && docker compose up -d && rm $ChainTar $WebTar"
-}
-
-foreach ($tar in @($ChainTar, $WebTar)) {
-    if (Test-Path $tar) {
-        Write-Host "==> Cleaning up local $tar" -ForegroundColor Cyan
-        Remove-Item $tar
-    }
+Invoke-Step "Deploying to server" {
+    # Streams both images in one tar straight into the server's Docker
+    # daemon over SSH — no local .tar files and no separate scp hop.
+    # `docker image prune -f` clears the now-dangling previous `:latest`
+    # layers so repeated deploys don't slowly fill the server's disk.
+    docker save $ChainImage $WebImage | ssh "${ServerUser}@${ServerHost}" "cd $ServerPath && git pull && docker load && docker compose up -d --force-recreate && docker image prune -f"
 }
 
 Write-Host "==> Done — https://albus.workflowsolved.com" -ForegroundColor Green
