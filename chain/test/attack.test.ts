@@ -6,12 +6,10 @@ import { MAINNET_PARAMS, UNITS_PER_COIN, rewardUnits, type ConsensusParams } fro
 import { createCoinbaseTransaction } from "../src/transaction.js";
 import { generateKeyPair } from "../src/wallet.js";
 
-// Echte Zeitregel (tau 30 min), leichte Rätsel, damit die Tests schnell laufen.
 const P: ConsensusParams = { ...MAINNET_PARAMS, initialReward: 210 * UNITS_PER_COIN, initialDifficulty: 128, coinbaseMaturity: 1 };
 const honest = generateKeyPair();
 const attacker = generateKeyPair();
 
-/** Baut einen Block mit frei gewähltem Zeitstempel (und optional falschem Lohn), mit gültigem Rätsel. */
 function forge(chain: Blockchain, timestamp: number, who = honest.address, rewardOffset = 0): Block {
   const t = chain.buildTemplate(who);
   const coinbase = createCoinbaseTransaction(who, rewardUnits(chain.params, t.index) + rewardOffset, t.index, timestamp);
@@ -46,7 +44,6 @@ test("Zeitstempel-Lügner: Zukunft, Vergangenheit und genau der Mittelwert werde
   assert.equal(c.addBlock(forge(c, Number.MAX_SAFE_INTEGER), "evil").status, "invalid");
   assert.equal(c.tip.hash, tip, "Lügen dürfen die Kette nicht verändern");
 
-  // Knapp innerhalb der Regeln bleibt erlaubt.
   assert.equal(c.addBlock(forge(c, Date.now() + P.maxFutureMs - 5_000), "ok").status, "added");
 });
 
@@ -68,7 +65,6 @@ test("Reorg-Bombe: lange Abzweigung mit einem kaputten Block mittendrin wechselt
   const main = grown(30);
   const tip = main.tip.hash;
 
-  // Angreifer baut 27 gute Blöcke, dann einen mit falschem Lohn, dann noch 10 gute obendrauf.
   const fork = new Blockchain(P, null);
   const blocks: Block[] = [];
   for (let i = 0; i < 27; i++) {
@@ -76,7 +72,7 @@ test("Reorg-Bombe: lange Abzweigung mit einem kaputten Block mittendrin wechselt
     fork.addBlock(b, "t");
     blocks.push(b);
   }
-  blocks.push(forge(fork, Math.max(Date.now(), nextStamp(fork).median + 1), attacker.address, 1)); // Lohn um 1 Einheit zu hoch
+  blocks.push(forge(fork, Math.max(Date.now(), nextStamp(fork).median + 1), attacker.address, 1));
 
   const t0 = Date.now();
   const results = blocks.map((b) => main.addBlock(b, "evil").status);
@@ -104,7 +100,6 @@ test("Reorg: eine echt schwerere Abzweigung gewinnt, Geldmenge bleibt exakt", ()
 
 test("Orphan-Flut: tausende Blöcke ohne bekannten Vorgänger sprengen den Speicher nicht", () => {
   const c = grown(5);
-  // Feste Schwierigkeit (tau riesig), sonst steigt sie bei 400 Blöcken in Sekunden ins Unmögliche.
   const other = new Blockchain({ ...P, retargetTauMs: 1e15 }, null);
   const spam: Block[] = [];
   for (let i = 0; i < 400; i++) {
@@ -112,7 +107,6 @@ test("Orphan-Flut: tausende Blöcke ohne bekannten Vorgänger sprengen den Speic
     other.addBlock(b, "t");
     spam.push(b);
   }
-  // Ab Block 2 fehlt dem Knoten der Vorgänger: alles landet im Orphan-Pool.
   const tip = c.tip.hash;
   const t0 = Date.now();
   for (const b of spam.slice(1)) c.addBlock(b, "evil");
