@@ -20,7 +20,10 @@ import {
   coinbaseId,
   createCoinbaseTransaction,
   isTransactionWellFormed,
+  parseInvitation,
+  verifyInvitation,
   verifyTransactionSignature,
+  type Invitation,
   type Transaction,
 } from "./transaction.js";
 import { SUB } from "./difficulty.js";
@@ -55,13 +58,22 @@ interface Undo {
   balances: [string, number | undefined][];
   nonces: [string, number | undefined][];
   immatureAdded: number;
-  immatureReleased?: { height: number; to: string; units: number };
+  immatureReleased?: { height: number; entry: Immature };
+  referrerAdded?: string;
+}
+
+interface Immature {
+  to: string;
+  units: number;
+  ref?: string;
+  refUnits?: number;
 }
 
 interface Ledger {
   balances: Map<string, number>;
   nonces: Map<string, number>;
-  immature: Map<number, { to: string; units: number }>;
+  immature: Map<number, Immature>;
+  referrers: Map<string, string>;
 }
 
 export interface AccountInfo {
@@ -90,7 +102,7 @@ export type AddResult =
 export type TxResult = { ok: true } | { ok: false; error: string };
 
 function emptyLedger(): Ledger {
-  return { balances: new Map(), nonces: new Map(), immature: new Map() };
+  return { balances: new Map(), nonces: new Map(), immature: new Map(), referrers: new Map() };
 }
 
 export interface HeaderNode {
@@ -290,7 +302,10 @@ export class Blockchain extends EventEmitter {
   getAccount(address: string): AccountInfo {
     const spendable = this.ledger.balances.get(address) ?? 0;
     let immature = 0;
-    for (const c of this.ledger.immature.values()) if (c.to === address) immature += c.units;
+    for (const c of this.ledger.immature.values()) {
+      if (c.to === address) immature += c.units;
+      if (c.ref === address) immature += c.refUnits ?? 0;
+    }
     const pending = this.pendingOf(address, this.mempool);
     return { spendable, immature, total: spendable + immature, nextNonce: (this.ledger.nonces.get(address) ?? 0) + pending.count };
   }
@@ -410,7 +425,13 @@ export class Blockchain extends EventEmitter {
     if (cb.to !== b.proofAddress) return "coinbase does not go to the proof address";
     if (cb.amount !== expected || cb.fee !== 0 || cb.nonce !== 0) return "wrong coinbase amount";
     if (cb.timestamp !== b.timestamp) return "wrong coinbase timestamp";
-    if (cb.id !== coinbaseId(cb.to, expected, b.index)) return "wrong coinbase id";
+    let inv: Invitation | undefined;
+    if (cb.referrer !== undefined || cb.referrerKey !== undefined || cb.referrerSig !== undefined) {
+      if (!p.referralBps) return "referrer not allowed on this network";
+      inv = { referrer: cb.referrer as string, key: cb.referrerKey as string, sig: cb.referrerSig as string };
+      if (!verifyInvitation(inv, cb.to, this.networkId)) return "invalid invitation (not signed by the miner)";
+    }
+    if (cb.id !== coinbaseId(cb.to, expected, b.index, inv)) return "wrong coinbase id";
     if (ids.has(cb.id)) return "duplicate transaction in block";
     return null;
   }
@@ -423,7 +444,14 @@ export class Blockchain extends EventEmitter {
 
     const due = b.index - this.params.coinbaseMaturity;
     const released = ledger.immature.get(due);
-    if (released) balances.set(released.to, bal(released.to) + released.units);
+    if (released) {
+      balances.set(released.to, bal(released.to) + released.units);
+      if (released.ref) balances.set(released.ref, bal(released.ref) + (released.refUnits ?? 0));
+    }
+    const cb = b.transactions[0];
+    const bound = ledger.referrers.get(cb.to);
+    if (cb.referrer && bound) return { err: "miner already has an inviter" };
+    const inviter = cb.referrer ?? bound;
 
     for (const tx of b.transactions) {
       if (tx.fromAddress === null) continue;
@@ -445,11 +473,15 @@ export class Blockchain extends EventEmitter {
       ledger.nonces.set(k, v);
     }
     if (released) {
-      undo.immatureReleased = { height: due, to: released.to, units: released.units };
+      undo.immatureReleased = { height: due, entry: released };
       ledger.immature.delete(due);
     }
-    const cb = b.transactions[0];
-    ledger.immature.set(b.index, { to: cb.to, units: cb.amount });
+    if (cb.referrer) {
+      ledger.referrers.set(cb.to, cb.referrer);
+      undo.referrerAdded = cb.to;
+    }
+    const bonus = inviter ? Math.floor((rewardUnits(this.params, b.index) * (this.params.referralBps ?? 0)) / 10000) : 0;
+    ledger.immature.set(b.index, bonus > 0 ? { to: cb.to, units: cb.amount - bonus, ref: inviter, refUnits: bonus } : { to: cb.to, units: cb.amount });
     this.indexBlock(b);
     return { err: null, undo };
   }
@@ -505,7 +537,8 @@ export class Blockchain extends EventEmitter {
     const u = e.undo as Undo;
     this.unindexBlock(e.block);
     ledger.immature.delete(u.immatureAdded);
-    if (u.immatureReleased) ledger.immature.set(u.immatureReleased.height, { to: u.immatureReleased.to, units: u.immatureReleased.units });
+    if (u.immatureReleased) ledger.immature.set(u.immatureReleased.height, u.immatureReleased.entry);
+    if (u.referrerAdded) ledger.referrers.delete(u.referrerAdded);
     for (const [k, v] of u.nonces) v === undefined ? ledger.nonces.delete(k) : ledger.nonces.set(k, v);
     for (const [k, v] of u.balances) v === undefined ? ledger.balances.delete(k) : ledger.balances.set(k, v);
   }
@@ -692,7 +725,7 @@ export class Blockchain extends EventEmitter {
     const expected = (this.ledger.nonces.get(from) ?? 0) + pending.count;
     if (tx.nonce !== expected) return `wrong nonce (expected ${expected})`;
     const due = this.ledger.immature.get(this.height + 1 - this.params.coinbaseMaturity);
-    const maturing = due && due.to === from ? due.units : 0;
+    const maturing = (due && due.to === from ? due.units : 0) + (due && due.ref === from ? (due.refUnits ?? 0) : 0);
     const available = (this.ledger.balances.get(from) ?? 0) + maturing - pending.cost;
     if (tx.amount + tx.fee > available) return "insufficient balance";
     return null;
@@ -748,15 +781,17 @@ export class Blockchain extends EventEmitter {
     return picked;
   }
 
-  buildTemplate(address: string): Template {
+  buildTemplate(address: string, invitation?: string): Template {
     if (!ADDRESS_RE.test(address)) throw new Error("invalid miner address");
+    const parsed = parseInvitation(invitation);
+    const inv = this.params.referralBps && parsed && !this.ledger.referrers.has(address) && verifyInvitation(parsed, address, this.networkId) ? parsed : undefined;
     const tipEntry = this.active[this.active.length - 1];
     const index = tipEntry.block.index + 1;
     const timestamp = Math.max(Date.now(), medianTimePast(this.params, tipEntry) + 1);
     const difficulty = nextDifficulty(this.params, tipEntry);
     const picked = this.pickTransactions(this.params.maxTxPerBlock);
     const fees = picked.reduce((sum, t) => sum + t.fee, 0);
-    const coinbase = createCoinbaseTransaction(address, rewardUnits(this.params, index) + fees, index, timestamp);
+    const coinbase = createCoinbaseTransaction(address, rewardUnits(this.params, index) + fees, index, timestamp, inv);
     const transactions = [coinbase, ...picked];
     const seed = computeSeed(tipEntry.block.hash, index, timestamp, difficulty, transactions);
     return { index, timestamp, previousHash: tipEntry.block.hash, difficulty, transactions, proofAddress: address, seed };

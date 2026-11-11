@@ -14,6 +14,40 @@ export interface Transaction {
   nonce: number;
   timestamp: number;
   signature: string | null;
+  referrer?: string;
+  referrerKey?: string;
+  referrerSig?: string;
+}
+
+export interface Invitation {
+  referrer: string;
+  key: string;
+  sig: string;
+}
+
+const KEY_RE = /^[0-9a-f]{66}$/;
+const SIG_RE = /^[0-9a-f]{128}$/;
+
+function invitationMessage(networkId: string, to: string, referrer: string): string {
+  return bytesToHex(sha256(concatBytes(tagBytes("albus-invite-v1"), tagBytes(networkId), addressBytes(to), addressBytes(referrer))));
+}
+
+export function createInvitation(privateKeyHex: string, publicKeyHex: string, referrer: string, networkId: string): Invitation {
+  return { referrer, key: publicKeyHex, sig: sign(invitationMessage(networkId, addressFromPublicKey(publicKeyHex), referrer), privateKeyHex) };
+}
+
+export function verifyInvitation(inv: Invitation, to: string, networkId: string): boolean {
+  if (!inv || typeof inv.referrer !== "string" || typeof inv.key !== "string" || typeof inv.sig !== "string") return false;
+  if (!ADDRESS_RE.test(inv.referrer) || inv.referrer === to || !KEY_RE.test(inv.key) || !SIG_RE.test(inv.sig)) return false;
+  if (addressFromPublicKey(inv.key) !== to) return false;
+  return verify(invitationMessage(networkId, to, inv.referrer), inv.sig, inv.key);
+}
+
+export const encodeInvitation = (i: Invitation): string => `${i.referrer}:${i.key}:${i.sig}`;
+
+export function parseInvitation(text: string | undefined): Invitation | null {
+  const m = /^(albus1[0-9a-f]{40}):([0-9a-f]{66}):([0-9a-f]{128})$/.exec(text ?? "");
+  return m ? { referrer: m[1], key: m[2], sig: m[3] } : null;
 }
 
 export const ADDRESS_RE = /^albus1[0-9a-f]{40}$/;
@@ -47,13 +81,14 @@ export function hashTransactionFields(
   );
 }
 
-export function coinbaseId(to: string, units: number, height: number): string {
+export function coinbaseId(to: string, units: number, height: number, inv?: Invitation): string {
+  if (inv) return bytesToHex(sha256(concatBytes(tagBytes("albus-cb-v5-ref"), addressBytes(to), addressBytes(inv.referrer), hexFixedBytes(inv.key, 33), hexFixedBytes(inv.sig, 64), u64be(units), u32be(height))));
   return bytesToHex(sha256(concatBytes(tagBytes("albus-cb-v4"), addressBytes(to), u64be(units), u32be(height))));
 }
 
-export function createCoinbaseTransaction(to: string, units: number, height: number, timestamp: number): Transaction {
+export function createCoinbaseTransaction(to: string, units: number, height: number, timestamp: number, inv?: Invitation): Transaction {
   return {
-    id: coinbaseId(to, units, height),
+    id: coinbaseId(to, units, height, inv),
     fromPublicKey: null,
     fromAddress: null,
     to,
@@ -62,6 +97,7 @@ export function createCoinbaseTransaction(to: string, units: number, height: num
     nonce: 0,
     timestamp,
     signature: null,
+    ...(inv ? { referrer: inv.referrer, referrerKey: inv.key, referrerSig: inv.sig } : {}),
   };
 }
 

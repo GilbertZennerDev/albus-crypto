@@ -12,7 +12,7 @@ export class CpuMiner {
   hashes = 0;
   blocks = 0;
 
-  constructor(private chain: Blockchain, private address: string, private throttleMs = 0) {}
+  constructor(private chain: Blockchain, private address: string, private throttleMs = 0, private invitation?: string) {}
 
   start(): void {
     if (this.running) return;
@@ -27,7 +27,7 @@ export class CpuMiner {
   private tick = (): void => {
     if (!this.running) return;
     if (!this.template || this.template.previousHash !== this.chain.tip.hash || Date.now() - this.builtAt > REFRESH_MS) {
-      this.template = this.chain.buildTemplate(this.address);
+      this.template = this.chain.buildTemplate(this.address, this.invitation);
       this.builtAt = Date.now();
     }
     const t = this.template;

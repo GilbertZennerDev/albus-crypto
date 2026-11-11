@@ -18,6 +18,7 @@ export type RejectCode = "stale-job" | "duplicate" | "low-difficulty" | "malform
 interface Client {
   ws: WebSocket;
   address?: string;
+  invitation?: string;
   agent?: string;
   template?: Template;
   jobId: string;
@@ -79,7 +80,7 @@ export class JobFeed {
 
   private newJob(c: Client, clean: boolean): void {
     if (!c.address) return;
-    c.template = this.chain.buildTemplate(c.address);
+    c.template = this.chain.buildTemplate(c.address, c.invitation);
     c.builtAt = Date.now();
     c.epoch++;
     c.jobId = `${c.template.index}:${c.template.seed}`;
@@ -153,8 +154,9 @@ export class JobFeed {
         }
         const addr: string = msg.address;
         c.address = addr;
+        c.invitation = typeof msg.invitation === "string" && msg.invitation.length <= 400 ? msg.invitation : undefined;
         c.agent = typeof msg.agent === "string" ? msg.agent.slice(0, 64) : undefined;
-        c.template = this.chain.buildTemplate(addr);
+        c.template = this.chain.buildTemplate(addr, c.invitation);
         c.builtAt = Date.now();
         c.epoch++;
         c.jobId = `${c.template.index}:${c.template.seed}`;
@@ -244,8 +246,8 @@ export class JobFeed {
     return false;
   }
 
-  challenge(address: string): { seed: string; difficulty: number; target: string } {
-    const t = this.chain.buildTemplate(address);
+  challenge(address: string, invitation?: string): { seed: string; difficulty: number; target: string } {
+    const t = this.chain.buildTemplate(address, invitation);
     this.legacy.set(address, t);
     if (this.legacy.size > 1000) this.legacy.delete(this.legacy.keys().next().value as string);
     return { seed: t.seed, difficulty: t.difficulty, target: targetOf(t.difficulty).toString(16).padStart(64, "0") };

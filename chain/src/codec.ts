@@ -104,13 +104,21 @@ const addrFrom = (hex: string): string => "albus1" + hex;
 
 function writeTx(w: Writer, tx: Transaction): void {
   const coinbase = tx.fromPublicKey === null;
-  w.u8(coinbase ? 0 : 1);
+  const invited = tx.referrer !== undefined || tx.referrerKey !== undefined || tx.referrerSig !== undefined;
+  if (!coinbase && invited) throw new Error("only a coinbase can have an inviter");
+  w.u8(coinbase ? (invited ? 2 : 0) : 1);
   w.hexFixed(tx.id, 32);
   w.hexFixed(addrBytes(tx.to), 20);
   w.u64(tx.amount);
   w.u64(tx.fee);
   w.u64(tx.nonce);
   w.u64(tx.timestamp);
+  if (coinbase && invited) {
+    if (!tx.referrer || !tx.referrerKey || !tx.referrerSig) throw new Error("inviter needs address, key and signature");
+    w.hexFixed(addrBytes(tx.referrer), 20);
+    w.hexFixed(tx.referrerKey, 33);
+    w.hexFixed(tx.referrerSig, 64);
+  }
   if (coinbase) {
     if (tx.fromAddress !== null || tx.signature !== null) throw new Error("coinbase must not have a sender");
   } else {
@@ -122,13 +130,19 @@ function writeTx(w: Writer, tx: Transaction): void {
 
 function readTx(r: Reader): Transaction {
   const kind = r.u8();
-  if (kind !== 0 && kind !== 1) throw new Error("unknown transaction kind");
+  if (kind !== 0 && kind !== 1 && kind !== 2) throw new Error("unknown transaction kind");
   const id = r.hexFixed(32);
   const to = addrFrom(r.hexFixed(20));
   const amount = r.u64();
   const fee = r.u64();
   const nonce = r.u64();
   const timestamp = r.u64();
+  if (kind === 2) {
+    const referrer = addrFrom(r.hexFixed(20));
+    const referrerKey = r.hexFixed(33);
+    const referrerSig = r.hexFixed(64);
+    return { id, fromPublicKey: null, fromAddress: null, to, amount, fee, nonce, timestamp, signature: null, referrer, referrerKey, referrerSig };
+  }
   if (kind === 0) return { id, fromPublicKey: null, fromAddress: null, to, amount, fee, nonce, timestamp, signature: null };
   const pk = r.hexVar(1, PUBKEY_MAX);
   const sig = r.hexVar(1, SIG_MAX);

@@ -56,6 +56,7 @@ app.get("/info", (_req, res) => {
     mempool: chain.getMempool().length,
     minFee: chain.params.minFeeUnits,
     coinbaseMaturity: chain.params.coinbaseMaturity,
+    referralBps: chain.params.referralBps ?? 0,
     unitsPerCoin: UNITS_PER_COIN,
     peers: p2p.status().peers.length,
   });
@@ -134,7 +135,7 @@ app.post("/faucet", (_req, res) => {
 app.get("/mining/challenge", (req, res) => {
   const address = String(req.query.address ?? "");
   if (!ADDRESS_RE.test(address)) return res.status(400).json({ error: "address query parameter required (Solo-Mining)" });
-  res.json(feed.challenge(address));
+  res.json(feed.challenge(address, typeof req.query.invitation === "string" ? req.query.invitation.slice(0, 400) : undefined));
 });
 
 app.get("/mining/stats", (_req, res) => {
@@ -159,7 +160,7 @@ if (process.env.CPU_MINE === "1") {
   if (!MINER_ADDRESS || !ADDRESS_RE.test(MINER_ADDRESS)) {
     console.error("CPU_MINE=1 needs MINER_ADDRESS=albus1...");
   } else {
-    new CpuMiner(chain, MINER_ADDRESS, Number(process.env.CPU_MINE_THROTTLE_MS ?? 0)).start();
+    new CpuMiner(chain, MINER_ADDRESS, Number(process.env.CPU_MINE_THROTTLE_MS ?? 0), process.env.MINER_INVITATION).start();
     console.log(`Built-in CPU miner active for ${MINER_ADDRESS}`);
   }
 }

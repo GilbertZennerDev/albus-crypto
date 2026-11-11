@@ -54,7 +54,7 @@ test("Codec: strict decoder refuses extra bytes, truncation, bad kinds and overs
   const tx = c.getChain().find((x) => x.transactions.length > 1)!.transactions[1];
   const t = encodeTransaction(tx);
   const badKind = Uint8Array.from(t);
-  badKind[0] = 2;
+  badKind[0] = 3;
   assert.throws(() => decodeTransaction(badKind, addressFromPublicKey), /transaction kind/);
   const big = Uint8Array.from(t);
   big.set([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], 1 + 32 + 20);

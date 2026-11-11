@@ -15,10 +15,12 @@ export interface ConsensusParams {
   minFeeUnits: number;
   coinbaseMaturity: number;
   maxFutureMs: number;
+  referralBps?: number;
 }
 
 export const CHECKPOINTS: Record<number, string> = {};
 
+export const MAX_REFERRAL_BPS = 5000;
 export const UNITS_PER_COIN = 100_000_000;
 
 export const MAINNET_PARAMS: ConsensusParams = {
@@ -47,6 +49,8 @@ export function paramsFromEnv(env: NodeJS.ProcessEnv = process.env): ConsensusPa
   if (env.TARGET_BLOCK_TIME_MS) p.targetBlockTimeMs = Number(env.TARGET_BLOCK_TIME_MS);
   if (env.RETARGET_TAU_MS) p.retargetTauMs = Number(env.RETARGET_TAU_MS);
   if (env.HALVING_INTERVAL_BLOCKS) p.halvingInterval = Number(env.HALVING_INTERVAL_BLOCKS);
+  const bps = Number(env.REFERRAL_BPS);
+  if (Number.isInteger(bps) && bps > 0 && bps <= MAX_REFERRAL_BPS) p.referralBps = bps;
   return p;
 }
 
