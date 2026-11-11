@@ -24,6 +24,36 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
+function Story() {
+  return (
+    <section className="rounded-xl border border-white/10 bg-white/[0.03] p-6">
+      <h2 className="text-3xl font-bold tracking-tight">Everyone starts at zero.</h2>
+      <p className="mt-1 text-sm text-white/50">Albus is Latin for white: a clean sheet.</p>
+      <p className="mt-4 text-white/70">
+        Nobody got coins before launch, not even the person who built it. There is no pool and no boss. You earn ALB by
+        solving the same puzzle as everyone else, and you can check every page of the ledger on your own.
+      </p>
+      <ul className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
+        <li className="rounded-lg bg-white/[0.04] p-3">
+          <strong className="block text-white">No head start</strong>
+          <span className="text-white/60">Every coin comes from mining. Nothing was handed out in advance.</span>
+        </li>
+        <li className="rounded-lg bg-white/[0.04] p-3">
+          <strong className="block text-white">Your own work</strong>
+          <span className="text-white/60">You mine alone, on your own PC. No pool takes a cut.</span>
+        </li>
+        <li className="rounded-lg bg-white/[0.04] p-3">
+          <strong className="block text-white">Check it yourself</strong>
+          <span className="text-white/60">The code is open and tested. Don't trust us, run it.</span>
+        </li>
+      </ul>
+      <p className="mt-4 text-xs text-white/40">
+        Albus is an experiment to learn how money like this works. Please don't put real money into it.
+      </p>
+    </section>
+  );
+}
+
 function StatusBar({ height, mempoolSize }: { height: number | null; mempoolSize: number | null }) {
   return (
     <div className="flex flex-wrap gap-4 text-sm text-white/60">
@@ -294,6 +324,8 @@ export default function App() {
         </div>
         <StatusBar height={health?.height ?? null} mempoolSize={mempoolSize} />
       </header>
+
+      <Story />
 
       <SupplyPanel supply={supply} />
 
