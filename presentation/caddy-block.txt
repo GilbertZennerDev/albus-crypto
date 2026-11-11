@@ -1,0 +1,4 @@
+# In den shared edge Caddy einfügen (/opt/workflow-solved/edge/caddy/Caddyfile bzw. workflowsolved-caddy):
+albus-crypto.workflowsolved.com {
+	reverse_proxy albus-site:80
+}

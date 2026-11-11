@@ -1,0 +1,15 @@
+services:
+  albus-site:
+    image: albus-site:latest
+    build:
+      context: .
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - edge
+
+networks:
+  edge:
+    name: edge
+    external: true

@@ -1,0 +1,39 @@
+# Not run standalone — this app has no Caddy container of its own (see
+# docker-compose.yml). Merge these blocks into workflowsolved-edge's
+# Caddyfile (the shared edge Caddy's config), same pattern as the touch-me /
+# trace-route / guess-pw blocks there — kept here too as a record of what
+# was added and in case that file ever needs restoring.
+#
+# NOTE: this project's compose services are named "chain" and "web" — but
+# "web" is also the service name in soulr, workflow-solved, and
+# practice-eval-shell, and Compose registers the service name as a network
+# alias on the shared edge network. Multiple containers
+# claiming the same alias on one Docker network makes DNS resolution for
+# "web" ambiguous, so route by the container's actual (unique) name instead
+# of the service alias: albus-crypto-web-1 / albus-crypto-chain-1.
+
+albus.workflowsolved.com {
+    reverse_proxy albus-crypto-web-1:80
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+
+api.albus.workflowsolved.com {
+    # /p2p (WebSocket) und die oeffentliche API sind offen; Peer-Verwaltung nur intern.
+    @intern path /p2p/peers /p2p/status
+    respond @intern 403
+
+    reverse_proxy albus-crypto-chain-1:4000
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}

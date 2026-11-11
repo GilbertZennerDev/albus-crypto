@@ -1,0 +1,26 @@
+# AlbusCrypto - merge this block into the shared Caddy config at
+# /opt/workflow-solved/edge/caddy/Caddyfile (see E:\WebApps\prompt.md, "Gated apps").
+# Password is in ../pwd.md (gitignored); only the hash lives here.
+
+albuscrypto.workflowsolved.com {
+	# Peers anderer Knoten brauchen kein Passwort: nur der WebSocket /p2p ist offen.
+	# Alles andere (inkl. /p2p/peers, /p2p/status) bleibt hinter dem Passwort.
+	handle /p2p {
+		reverse_proxy chain:4000
+	}
+
+	handle {
+		basic_auth {
+			admin <bcrypt-hash-from-caddy-hash-password>
+		}
+		reverse_proxy chain:4000
+	}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}

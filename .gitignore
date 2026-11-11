@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+*.tar
+
+chain/data/*.json
+!chain/data/.gitkeep
+
+fresh-worker/build/
+
+pwd.md
+*.md

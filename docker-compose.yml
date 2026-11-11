@@ -1,0 +1,70 @@
+# Production deploy for Albus on the shared Hetzner box.
+#
+# No ports published — the shared edge Caddy on this box (workflowsolved-caddy,
+# part of the workflowsolved-edge stack, network "edge") reverse-proxies to these
+# containers by service name over the shared network below, same pattern as
+# ../touch-me, ../TraceRoute, and ../guess-pw. Add the matching site blocks
+# to that Caddy's Caddyfile (see caddy/Caddyfile.snippet in this repo).
+#
+# Usage (manual, on the server):
+#   cp .env.example .env   # fill in real values
+#   set -a; source .env; set +a
+#   docker compose build
+#   docker compose up -d
+#
+# Usage (from a dev machine, builds locally and ships the images — the box
+# is low-RAM, same workaround as guess-pw/deploy.ps1): .\deploy.ps1
+# This relies on the `image:` tags below matching what deploy.ps1 builds and
+# `docker load`s on the server, so `docker compose up -d` there just runs the
+# already-loaded images instead of rebuilding.
+
+services:
+  chain:
+    image: albus-chain:latest
+    build:
+      context: ./chain
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      # No consensus parameters here: the defaults in chain/src/params.ts are the mainnet.
+      # Setting any of them changes the networkId (testnet only, see .env.example).
+    volumes:
+      - albus_chain_data:/app/data
+    expose:
+      - "4000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    networks:
+      - default
+      - edge
+
+  web:
+    image: albus-web:latest
+    build:
+      context: ./web
+      args:
+        VITE_ALBUS_API_URL: ${VITE_ALBUS_API_URL}
+    restart: unless-stopped
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      - chain
+    networks:
+      - default
+      - edge
+
+volumes:
+  albus_chain_data:
+
+networks:
+  edge:
+    name: edge
+    external: true

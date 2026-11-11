@@ -1,0 +1,84 @@
+{
+  "note": "Feste Testvektoren fuer das Binaerformat (docs/BINARY_FORMAT.md), Regelwerk 4. Neu erzeugen mit: npx tsx chain/tools/gen-codec-vectors.ts",
+  "networkId": "abababababababab",
+  "payment": {
+    "fields": {
+      "id": "e37cab034af8ea1f870d7d4818c08b8406a6a1a81ddd96b7f71f1ca6ba17c772",
+      "fromPublicKey": "0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8",
+      "fromAddress": "albus1b860f56795fc03f3c21685383d1b5a2f2954f49b",
+      "to": "albus11111111111111111111111111111111111111111",
+      "amount": 500000000,
+      "fee": 100000,
+      "nonce": 0,
+      "timestamp": 1700000000000,
+      "signature": "b6d644e75d086210789758722675cb4549cd7bea51381f4a49fab5783de45e7913c9d2506ceaaa8bf6242bd60b905f73819877300c7393201e0cce49c794efff"
+    },
+    "encoding": "01e37cab034af8ea1f870d7d4818c08b8406a6a1a81ddd96b7f71f1ca6ba17c7721111111111111111111111111111111111111111000000001dcd650000000000000186a000000000000000000000018bcfe56800410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b840b6d644e75d086210789758722675cb4549cd7bea51381f4a49fab5783de45e7913c9d2506ceaaa8bf6242bd60b905f73819877300c7393201e0cce49c794efff"
+  },
+  "coinbase": {
+    "fields": {
+      "id": "92dc2f506d0095e928254c38e86a93e3858a7fe92161febe8f898b9da55ef1ad",
+      "fromPublicKey": null,
+      "fromAddress": null,
+      "to": "albus12222222222222222222222222222222222222222",
+      "amount": 1000000000,
+      "fee": 0,
+      "nonce": 0,
+      "timestamp": 1700000060000,
+      "signature": null
+    },
+    "encoding": "0092dc2f506d0095e928254c38e86a93e3858a7fe92161febe8f898b9da55ef1ad2222222222222222222222222222222222222222000000003b9aca00000000000000000000000000000000000000018bcfe65260"
+  },
+  "block": {
+    "fields": {
+      "index": 3,
+      "timestamp": 1700000060000,
+      "transactions": [
+        {
+          "id": "92dc2f506d0095e928254c38e86a93e3858a7fe92161febe8f898b9da55ef1ad",
+          "fromPublicKey": null,
+          "fromAddress": null,
+          "to": "albus12222222222222222222222222222222222222222",
+          "amount": 1000000000,
+          "fee": 0,
+          "nonce": 0,
+          "timestamp": 1700000060000,
+          "signature": null
+        },
+        {
+          "id": "e37cab034af8ea1f870d7d4818c08b8406a6a1a81ddd96b7f71f1ca6ba17c772",
+          "fromPublicKey": "0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8",
+          "fromAddress": "albus1b860f56795fc03f3c21685383d1b5a2f2954f49b",
+          "to": "albus11111111111111111111111111111111111111111",
+          "amount": 500000000,
+          "fee": 100000,
+          "nonce": 0,
+          "timestamp": 1700000000000,
+          "signature": "b6d644e75d086210789758722675cb4549cd7bea51381f4a49fab5783de45e7913c9d2506ceaaa8bf6242bd60b905f73819877300c7393201e0cce49c794efff"
+        }
+      ],
+      "previousHash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "nonce": "000000000000001f",
+      "difficulty": 64,
+      "hash": "27fe542444b3ccb275b32af2074a63c66b0fb4b9e71a7a3f4209b6baae66bab7",
+      "seed": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "proofAddress": "albus12222222222222222222222222222222222222222"
+    },
+    "encoding": "000000030000018bcfe65260cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd004027fe542444b3ccb275b32af2074a63c66b0fb4b9e71a7a3f4209b6baae66bab720efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef142222222222222222222222222222222222222222000000000000001f00020092dc2f506d0095e928254c38e86a93e3858a7fe92161febe8f898b9da55ef1ad2222222222222222222222222222222222222222000000003b9aca00000000000000000000000000000000000000018bcfe6526001e37cab034af8ea1f870d7d4818c08b8406a6a1a81ddd96b7f71f1ca6ba17c7721111111111111111111111111111111111111111000000001dcd650000000000000186a000000000000000000000018bcfe56800410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b840b6d644e75d086210789758722675cb4549cd7bea51381f4a49fab5783de45e7913c9d2506ceaaa8bf6242bd60b905f73819877300c7393201e0cce49c794efff",
+    "transactionRoot": "2a0af63f7b035512764f8123f830d30fcd836006fa11c16837625250d413dff6"
+  },
+  "genesis": {
+    "fields": {
+      "index": 0,
+      "timestamp": 1793836800000,
+      "transactions": [],
+      "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "nonce": "0000000000000000",
+      "difficulty": 0,
+      "hash": "8284122e12e14b1e6faf32973ef6edf86450d8956018dca74e2e5f4516d0ea36",
+      "seed": "",
+      "proofAddress": ""
+    },
+    "encoding": "00000000000001a1a9015800000000000000000000000000000000000000000000000000000000000000000000008284122e12e14b1e6faf32973ef6edf86450d8956018dca74e2e5f4516d0ea36000000000000000000000000"
+  }
+}
