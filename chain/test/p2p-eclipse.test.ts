@@ -77,7 +77,7 @@ test("Eclipse: 100 gefälschte Absender füllen nur die Eingangs-Plätze, der eh
   socks.forEach((s) => s.terminate());
 });
 
-test("Eclipse: Adress-Flut füllt die Liste nur bis 200, vorhandene Verbindungen bleiben", async () => {
+test("Eclipse: Adress-Flut belegt höchstens 100 von 200 Plätzen, ehrliche Adressen finden danach noch Platz", async () => {
   const { honestChain, victimChain, victim, honest } = await pair(3);
   const ws = (await sybil(victim.url, "10.2.0.1"))!;
   assert.ok(ws);
@@ -94,10 +94,16 @@ test("Eclipse: Adress-Flut füllt die Liste nur bis 200, vorhandene Verbindungen
 
   flood((i) => `ws://n${i}.albus-test.invalid:4000/p2p`);
   await sleep(1500);
-  console.log(`Nach 6000 öffentlich aussehenden Adressen: ${known.size} in der Liste (Limit 200)`);
-  assert.ok(known.size <= 200 && known.size > 1);
+  console.log(`Nach 6000 öffentlich aussehenden Adressen: ${known.size} in der Liste (Gerüchte-Limit 100 + 1 ehrliche)`);
+  assert.equal(known.size, 101, "Gerüchte belegen höchstens 100 Plätze");
   assert.ok(known.has(honest.url), "Die ehrliche Start-Adresse bleibt in der Liste");
   assert.equal(outbound(victim.p2p) >= 1, true);
+
+  for (let i = 0; i < 99; i++) assert.ok(victim.p2p.addPeer(`ws://friend${i}.albus-test.invalid:4000/p2p`));
+  assert.ok(known.size <= 200);
+  assert.ok(victim.p2p.addPeer("ws://late-friend.albus-test.invalid:4000/p2p"));
+  assert.ok(known.has("ws://late-friend.albus-test.invalid:4000/p2p"), "Selbst gewählte Adressen verdrängen Gerüchte-Einträge");
+  assert.ok(known.has(honest.url));
 
   mine(honestChain);
   assert.ok(await until(() => victimChain.height === 4), "Ehrlicher Block kommt trotz Adress-Flut an");

@@ -6,6 +6,7 @@ import { ADDRESS_RE, normalizeTransaction } from "./transaction.js";
 import { paramsFromEnv, UNITS_PER_COIN } from "./params.js";
 import { JobFeed } from "./mining-ws.js";
 import { P2P } from "./p2p.js";
+import { PeerStats } from "./peer-stats.js";
 import { rateLimit } from "./guard.js";
 import { CpuMiner } from "./cpu-miner.js";
 
@@ -27,7 +28,9 @@ app.use(express.json({ limit: "1mb" }));
 
 const server = createServer(app);
 const feed = new JobFeed(chain);
-const p2p = new P2P(chain, { dataDir: DATA_DIR, seeds: PEERS, publicUrl: PUBLIC_URL });
+const peerStats = new PeerStats(DATA_DIR);
+setInterval(() => peerStats.save(), 60_000).unref();
+const p2p = new P2P(chain, { dataDir: DATA_DIR, seeds: PEERS, publicUrl: PUBLIC_URL, stats: peerStats });
 
 server.on("upgrade", (req, socket, head) => {
   const path = new URL(req.url ?? "/", "http://x").pathname;
@@ -57,6 +60,8 @@ app.get("/info", (_req, res) => {
     peers: p2p.status().peers.length,
   });
 });
+
+app.get("/stats/peers", (_req, res) => res.json({ days: peerStats.summary() }));
 
 app.get("/p2p/status", (_req, res) => res.json(p2p.status()));
 

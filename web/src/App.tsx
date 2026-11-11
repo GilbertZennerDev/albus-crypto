@@ -117,6 +117,9 @@ function WalletPanel({
           </button>
           <div className="flex gap-2">
             <input
+              type="password"
+              autoComplete="off"
+              data-rr-mask
               value={importKey}
               onChange={(e) => setImportKey(e.target.value)}
               placeholder="paste private key to import"
@@ -345,7 +348,8 @@ export default function App() {
 
       <footer className="pb-4 text-center text-xs text-white/30">
         Peer-to-peer proof-of-work chain, fair launch, solo mining, ECDSA-signed transactions, halving issuance capped at 21,000,000 ALB.
-      </footer>
+        <br />
+        This page counts visits and records how pages are used (clicks and scrolling) to help me improve it.      </footer>
     </div>
   );
 }

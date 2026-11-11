@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
+import { PeerStats } from "./peer-stats.js";
 import { ConnLimiter, clientIp, isPublicWsUrl } from "./guard.js";
 import type { Blockchain, HeaderTip } from "./blockchain.js";
 import type { Block } from "./block.js";
@@ -13,6 +14,7 @@ const ALLOW_PRIVATE = process.env.P2P_ALLOW_PRIVATE === "1";
 const MAX_CONN_PER_IP = Number(process.env.P2P_MAX_CONN_PER_IP ?? 4);
 const URL_RE = /^wss?:\/\/[^\s/]+(\/[^\s]*)?$/;
 const MAX_KNOWN = 200;
+const MAX_GOSSIP_KNOWN = 100;
 const MAX_BLOCKS_PER_MSG = 100;
 const MAX_HEADERS_PER_MSG = 500;
 const STRIKES_BEFORE_BAN = 3;
@@ -43,10 +45,12 @@ interface Peer {
 interface KnownAddr {
   fails: number;
   nextTry: number;
+  gossip: boolean;
 }
 
 export interface P2POptions {
   dataDir: string | null;
+  stats?: PeerStats;
   seeds: string[];
   publicUrl?: string;
   maxOutbound?: number;
@@ -111,8 +115,15 @@ export class P2P {
   private learn(url: unknown, gossip = false): void {
     if (typeof url !== "string" || url.length > 200 || !URL_RE.test(url)) return;
     if (gossip && !ALLOW_PRIVATE && !isPublicWsUrl(url)) return;
-    if (this.selfUrls.has(url) || this.known.has(url) || this.known.size >= MAX_KNOWN) return;
-    this.known.set(url, { fails: 0, nextTry: 0 });
+    if (this.selfUrls.has(url) || this.known.has(url)) return;
+    const gossiped = [...this.known].filter(([, st]) => st.gossip);
+    if (gossip && gossiped.length >= MAX_GOSSIP_KNOWN) return;
+    if (this.known.size >= MAX_KNOWN) {
+      const victim = gossiped.sort((a, b) => b[1].fails - a[1].fails)[0];
+      if (!victim) return;
+      this.known.delete(victim[0]);
+    }
+    this.known.set(url, { fails: 0, nextTry: 0, gossip });
     this.saveKnown();
   }
 
@@ -205,6 +216,7 @@ export class P2P {
       connectedAt: Date.now(),
     };
     this.peers.add(peer);
+    if (inbound) this.opts.stats?.seen(ip, this.peers.size);
     ws.on("pong", () => (peer.alive = true));
     ws.on("close", () => this.peers.delete(peer));
     ws.on("error", () => this.peers.delete(peer));
