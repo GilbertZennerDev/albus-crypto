@@ -152,3 +152,8 @@ footer a{text-decoration:underline wavy var(--red) 2px}
 .dl .cmd button:focus-visible{outline-color:var(--paper)}
 .dlnotes{margin:22px 0 0;padding-left:1.2em;font-size:.9rem;line-height:1.5;opacity:.8;max-width:60ch}
 .dlnotes li{margin-bottom:4px}
+
+.dl .farm { margin-top: 36px; padding-top: 26px; border-top: 2px dashed currentColor; }
+.dl .farm h3 { margin: 0 0 8px; font-size: 1.5rem; }
+.dl .cmd code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.dl a.dlbtn.small { font-size: .95rem; padding: 10px 16px; }
