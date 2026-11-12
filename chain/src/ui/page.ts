@@ -14,6 +14,11 @@ export const indexHtml = (token: string): string => `<!doctype html>
 
 <section id="wallet"><h2>Your wallet</h2><div id="wallet-body"></div></section>
 
+<section id="farm" hidden><h2>Your farm and servers</h2>
+<p class="muted small">Every computer that mines for your address shows up here: your servers and the PCs of your farm. Install the miner there and give it the address above (the key is not needed).</p>
+<p id="farm-sum"></p><table><thead><tr><th>Name</th><th>Speed</th><th>Shares</th><th>Online</th></tr></thead><tbody id="farm-rows"></tbody></table>
+<p id="farm-note" class="small muted"></p></section>
+
 <section id="friends"><h2>Friends</h2>
 <p class="muted">Share a part of everything you earn from now on. The network fee comes out of the shared part. Percentages are of your <em>new</em> income.</p>
 <table><thead><tr><th>Name</th><th>Address</th><th>%</th><th></th></tr></thead><tbody id="rows"></tbody></table>
@@ -68,14 +73,39 @@ const coins = (u, per) => (u / per).toFixed(2);
 function renderWallet() {
   const b = $("wallet-body"); b.replaceChildren();
   if (!state.address) {
-    b.append(el("p", "You have no wallet yet. Creating one makes a key file on this PC. The key never leaves it.", "muted"));
-    const btn = el("button", "Create wallet"); btn.className = "primary";
-    btn.onclick = async () => { try { const r = await api("/wallet/create", "POST", {}); alert("Wallet created. Back up this file, without it the coins are gone:\\n" + r.file); load(); } catch (e) { alert(e.message); } };
-    b.append(btn); return;
+    b.append(el("p", "Your miner needs a wallet to receive coins. Create a new one, or link the wallet you already have (for example from the website). The key stays on this PC.", "muted"));
+    const btn = el("button", "Create new wallet"); btn.className = "primary";
+    btn.onclick = async () => { try { const r = await api("/wallet/create", "POST", {}); alert("Wallet created and linked to your miner. Back up this file, without it the coins are gone:\\n" + r.file); load(); } catch (e) { alert(e.message); } };
+    b.append(btn);
+    b.append(el("p", "Already have a wallet? Paste its private key (64 characters). The miner will then mine to that wallet.", "muted small"));
+    const inp = el("input"); inp.type = "password"; inp.id = "w-key"; inp.autocomplete = "off"; inp.spellcheck = false; inp.placeholder = "Private key";
+    const link = el("button", "Link existing wallet");
+    link.onclick = async () => { try { const r = await api("/wallet/import", "POST", { privateKey: inp.value }); inp.value = ""; alert("Wallet linked to your miner. Back up this file, without it the coins are gone:\\n" + r.file); load(); } catch (e) { alert(e.message); } };
+    const addr = el("input"); addr.id = "w-addr"; addr.autocomplete = "off"; addr.spellcheck = false; addr.placeholder = "albus1…";
+    const only = el("button", "Link address only");
+    only.onclick = async () => { try { const r = await api("/wallet/address", "POST", { address: addr.value }); addr.value = ""; alert("Address linked. This computer mines for it but holds no key:\\n" + r.file); load(); } catch (e) { alert(e.message); } };
+    b.append(inp, link);
+    b.append(el("p", "Server or farm computer? It does not need the key. Just give it the address of your wallet, it then mines for it. The key stays on your main PC.", "muted small"));
+    b.append(addr, only); return;
   }
   b.append(el("div", state.address, "mono"));
   if (state.account) b.append(el("p", "Spendable: " + coins(state.account.spendable, state.account.unitsPerCoin) + " ALB, maturing: " + coins(state.account.immature, state.account.unitsPerCoin) + " ALB", "muted"));
-  b.append(el("p", "Keep your wallet.json safe. Anyone with it can spend your coins.", "muted small"));
+  b.append(el("p", state.hasKey ? "Keep your wallet.json safe. Anyone with it can spend your coins." : "This computer only knows the address, not the key. It can mine, but not spend.", "muted small"));
+}
+
+const rate = (h) => { const u = ["H/s", "kH/s", "MH/s", "GH/s", "TH/s"]; let i = 0; while (h >= 1000 && i < u.length - 1) { h /= 1000; i++; } return h.toFixed(i ? 2 : 0) + " " + u[i]; };
+const ago = (s) => s < 90 ? s + " s" : s < 5400 ? Math.round(s / 60) + " min" : s < 172800 ? Math.round(s / 3600) + " h" : Math.round(s / 86400) + " days";
+
+async function loadFarm() {
+  $("farm").hidden = !state.address;
+  if (!state.address) return;
+  try {
+    const f = await api("/farm");
+    const tb = $("farm-rows"); tb.replaceChildren();
+    f.workers.forEach((w) => { const tr = el("tr"); tr.append(el("td", w.name || w.agent || "miner"), el("td", rate(w.hashrate)), el("td", String(w.accepted)), el("td", ago(w.onlineSec))); tb.append(tr); });
+    $("farm-sum").textContent = f.count ? f.count + (f.count === 1 ? " computer" : " computers") + " online, together " + rate(f.hashrate) : "No computer is mining for this address right now.";
+    $("farm-note").textContent = f.note || "";
+  } catch (e) { $("farm-note").textContent = e.message; }
 }
 
 function renderRows() {
@@ -106,7 +136,7 @@ async function load() {
     $("status").textContent = "Version " + state.version + " · " + (n ? "node online, height " + n.height + ", network " + n.networkId : "node not reachable");
     $("update").hidden = !state.updatesAvailable;
     $("auto-update").checked = state.autoUpdate; $("update-last").textContent = state.lastUpdate || "";
-    renderWallet(); renderRows(); renderInviter();
+    renderWallet(); renderRows(); renderInviter(); loadFarm();
   } catch (e) { $("status").textContent = "Cannot talk to the miner: " + e.message; }
 }
 
@@ -147,4 +177,5 @@ $("update-apply").onclick = async () => {
   $("update-apply").disabled = false; load();
 };
 load();
+setInterval(() => { if (state) loadFarm(); }, 15000);
 })();`;

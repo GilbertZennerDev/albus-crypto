@@ -32,6 +32,11 @@ function restartSelf() {
   setTimeout(() => process.exit(0), 1500).unref();
 }
 
+function restartMiner() {
+  if (process.env.ALBUS_UI_TASK !== "1") return;
+  execFile("pwsh", ["-NoProfile", "-Command", "Stop-ScheduledTask AlbusSupervisor -ErrorAction SilentlyContinue; Start-Sleep 2; Start-ScheduledTask AlbusSupervisor"], { windowsHide: true }, () => {});
+}
+
 function updates(): UpdateHooks | undefined {
   const url = process.env.ALBUS_UPDATE_URL;
   if (!url || PINNED_KEYS.length === 0) return undefined;
@@ -113,7 +118,12 @@ async function shareLoop() {
   for (;;) {
     await new Promise((r) => setTimeout(r, 60_000));
     try {
-      const keys = existsSync(walletFile) ? readKey(walletFile) : null;
+      let keys: ReturnType<typeof readKey> | null = null;
+      try {
+        keys = existsSync(walletFile) ? readKey(walletFile) : null;
+      } catch {
+        keys = null;
+      }
       const list = loadFriends(home);
       const rules = rulesOf(list);
       if (!keys || !list.shareEnabled || rules.length === 0) continue;
@@ -129,7 +139,7 @@ async function shareLoop() {
 
 const token = randomBytes(24).toString("hex");
 const upd = updates();
-const app = createUiApp({ home, apiBase, token, hosts: [`127.0.0.1:${port}`, `localhost:${port}`], version: installed, updates: upd });
+const app = createUiApp({ home, apiBase, token, hosts: [`127.0.0.1:${port}`, `localhost:${port}`], version: installed, updates: upd, onWalletChanged: restartMiner, farmApi: process.env.ALBUS_FARM_API ?? "https://api.albus.workflowsolved.com" });
 app.listen(port, "127.0.0.1", () => {
   const url = `http://127.0.0.1:${port}/`;
   console.log(`Albus miner UI: ${url}`);

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { T } from "./texts.mjs";
+import { D, CMD } from "./dl.mjs";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const langs = ["de", "en", "fr"];
@@ -38,6 +39,10 @@ function puzzle(p) {
   return `<div class="puzzle" id="puzzle" data-l="${L}"><div class="hd"><strong>${p.h}</strong><div class="ctl"><select id="lvl" aria-label="${p.level}"><option value="3">3 ${p.level}</option><option value="4" selected>4 ${p.level}</option><option value="5">5 ${p.level}</option></select><button type="button">${p.start}</button></div></div><div class="hash" aria-live="off">0000…</div><p class="in">&nbsp;</p><p class="hint">${p.hint}</p><div class="stat"><div><b data-n>0</b><span>${p.tries}</span></div><div><b data-t>0.0 s</b><span>${p.time}</span></div><div><b data-r>0</b><span>${p.rate}</span></div></div><p class="res" aria-live="polite"></p></div>`;
 }
 
+function download(d) {
+  return `<section class="dl" id="download"><p class="kick">${d.kicker}</p><h2>${d.h}</h2><p class="lead">${d.p}</p><a class="dlbtn" href="/releases/install-albus.ps1" download><span aria-hidden="true">⬇</span> ${d.btn}</a><ol class="dlsteps">${d.steps.map((x) => `<li>${x}</li>`).join("")}</ol><p class="fast">${d.fast}</p><div class="cmd"><code>${CMD}</code><button type="button" data-copy="${CMD}" data-done="${d.copied}">${d.copy}</button></div><ul class="dlnotes">${d.notes.map((x) => `<li>${x}</li>`).join("")}</ul></section>`;
+}
+
 function stickBox(h, items, extra) {
   return `<section class="stick"><h2>${h}</h2><ul>${items.map((x) => `<li>${x}</li>`).join("")}</ul>${extra ? `<p>${extra}</p>` : ""}</section>`;
 }
@@ -49,6 +54,7 @@ function simple(ctx, t) {
     `<body>${topbar(ctx)}<main class="wrap">
 <section class="hero"><span class="sticker">${s.sticker}</span><h1 class="giant">Albus</h1><p class="sub">${s.sub}</p>
 ${paper("note tilt-a", s.hi.map((x) => `<p>${x}</p>`).join("") + (s.sig ? `<p class="sig">${s.sig}</p>` : ""))}</section>
+${download(D[ctx.lang])}
 ${paper("tilt-b", `<h2>${s.idea.h}</h2>${s.idea.p.map((x) => `<p>${x}</p>`).join("")}${book(s.idea)}${aside(s.idea.aside)}`)}
 ${paper("tilt-a", `<h2>${s.mining.h}</h2>${s.mining.p.map((x) => `<p>${x}</p>`).join("")}${puzzle(s.puzzle)}${aside(s.mining.aside)}`)}
 <section><div class="head2"><h2>${s.numbers.h}</h2></div><div class="figs">${s.numbers.figs.map((f) => `<div class="fig"><b>${f[0]}${f[1] ? `<em>${f[1]}</em>` : ""}</b><span class="lbl">${f[2]}</span><p>${f[3]}</p></div>`).join("")}</div></section>

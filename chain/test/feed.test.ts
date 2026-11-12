@@ -115,3 +115,46 @@ test("Mining feed: hello -> job -> submit -> block; a second worker then gets a 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Mining feed: /mining/workers lists every machine of one address with name and hashrate", { timeout: 60_000 }, async () => {
+  const port = PORT + 1;
+  const dir = mkdtempSync(join(tmpdir(), "albus-farm-"));
+  const node = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
+    env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", DATA_DIR: dir, INITIAL_DIFFICULTY: "128", RETARGET_TAU_MS: "1e15", CPU_MINE: "" },
+    stdio: "ignore",
+  });
+  const socks: WebSocket[] = [];
+  try {
+    for (let i = 0; ; i++) {
+      try {
+        if ((await fetch(`http://127.0.0.1:${port}/info`)).ok) break;
+      } catch {}
+      if (i > 60) throw new Error("Knoten startet nicht");
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    const open = (hello: Msg) =>
+      new Promise<void>((res, rej) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/mining/ws`);
+        socks.push(ws);
+        ws.on("open", () => {
+          ws.send(JSON.stringify({ type: "hello", address: A, ...hello }));
+          setTimeout(res, 300);
+        });
+        ws.on("error", rej);
+      });
+    await open({ name: "Rig <b>1</b>", agent: "albus-farm/1", hashrate: 1e6 });
+    await open({ name: "Server-2", agent: "albus-farm/1", hashrate: 2e6 });
+    const r = await (await fetch(`http://127.0.0.1:${port}/mining/workers/${A}`)).json();
+    assert.equal(r.count, 2);
+    assert.equal(r.hashrate, 3e6);
+    assert.deepEqual(r.workers.map((w: Msg) => w.name), ["Rig b1b", "Server-2"]);
+    assert.equal(JSON.stringify(r).includes("127.0.0.1"), false);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/mining/workers/${B}`).then((x) => x.json())).count, 0);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/mining/workers/nope`)).status, 400);
+  } finally {
+    socks.forEach((s) => s.terminate());
+    node.kill();
+    await new Promise((r) => setTimeout(r, 500));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

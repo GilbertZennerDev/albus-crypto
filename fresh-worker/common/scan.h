@@ -51,6 +51,38 @@ inline void put_be32(uint8_t* dst, uint32_t v) {
   dst[0] = uint8_t(v >> 24); dst[1] = uint8_t(v >> 16); dst[2] = uint8_t(v >> 8); dst[3] = uint8_t(v);
 }
 
+ALBUS_TARGET_SHANI inline void scan_shani(const ShaNiMid& mid, const uint8_t* blk0, uint32_t lo0, uint64_t n0, uint64_t count, Target share, Target block,
+                                          std::vector<Hit>& hits) {
+  uint8_t blk[64];
+  memcpy(blk, blk0, 64);
+  for (uint64_t i = 0; i < count; i++) {
+    put_be32(blk + 36, lo0 + (uint32_t)i);
+    uint32_t h0, h1;
+    shani_block_w01(mid, blk, h0, h1);
+    if (share.met(h0, h1)) hits.push_back({n0 + i, block.met(h0, h1)});
+  }
+}
+
+ALBUS_TARGET_AVX2 inline uint64_t scan_avx2(const JobPrefix& job, const uint8_t* blk, uint32_t lo0, uint64_t n0, uint64_t count, Target share, Target block,
+                                            std::vector<Hit>& hits) {
+  uint32_t w0[16];
+  bswap_words(blk, w0);
+  uint64_t i = 0;
+  for (; i + 8 <= count; i += 8) {
+    alignas(32) uint32_t lanes[16][8];
+    for (int j = 0; j < 16; j++)
+      for (int l = 0; l < 8; l++) lanes[j][l] = w0[j];
+    for (int l = 0; l < 8; l++) lanes[9][l] = lo0 + (uint32_t)(i + l);
+    __m256i wv[16];
+    for (int j = 0; j < 16; j++) wv[j] = _mm256_load_si256((const __m256i*)lanes[j]);
+    alignas(32) uint32_t h0[8], h1[8];
+    avx2_block8_w01(job.mid, wv, h0, h1);
+    for (int l = 0; l < 8; l++)
+      if (share.met(h0[l], h1[l])) hits.push_back({n0 + i + l, block.met(h0[l], h1[l])});
+  }
+  return i;
+}
+
 inline void scan_fast(const JobPrefix& job, const ShaNiMid* mid, uint64_t n0, uint64_t count, Target share, Target block,
                       Path path, std::vector<Hit>& hits) {
   const uint32_t lo0 = (uint32_t)n0;
@@ -59,30 +91,10 @@ inline void scan_fast(const JobPrefix& job, const ShaNiMid* mid, uint64_t n0, ui
 
   uint64_t i = 0;
   if (path == Path::ShaNi) {
-    for (; i < count; i++) {
-      put_be32(blk + 36, lo0 + (uint32_t)i);
-      uint32_t h0, h1;
-      shani_block_w01(*mid, blk, h0, h1);
-      if (share.met(h0, h1)) hits.push_back({n0 + i, block.met(h0, h1)});
-    }
+    scan_shani(*mid, blk, lo0, n0, count, share, block, hits);
     return;
   }
-  if (path == Path::Avx2) {
-    uint32_t w0[16];
-    bswap_words(blk, w0);
-    for (; i + 8 <= count; i += 8) {
-      alignas(32) uint32_t lanes[16][8];
-      for (int j = 0; j < 16; j++)
-        for (int l = 0; l < 8; l++) lanes[j][l] = w0[j];
-      for (int l = 0; l < 8; l++) lanes[9][l] = lo0 + (uint32_t)(i + l);
-      __m256i wv[16];
-      for (int j = 0; j < 16; j++) wv[j] = _mm256_load_si256((const __m256i*)lanes[j]);
-      alignas(32) uint32_t h0[8], h1[8];
-      avx2_block8_w01(job.mid, wv, h0, h1);
-      for (int l = 0; l < 8; l++)
-        if (share.met(h0[l], h1[l])) hits.push_back({n0 + i + l, block.met(h0[l], h1[l])});
-    }
-  }
+  if (path == Path::Avx2) i = scan_avx2(job, blk, lo0, n0, count, share, block, hits);
   for (; i < count; i++) {
     put_be32(blk + 36, lo0 + (uint32_t)i);
     uint32_t st[8];

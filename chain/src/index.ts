@@ -138,6 +138,13 @@ app.get("/mining/challenge", (req, res) => {
   res.json(feed.challenge(address, typeof req.query.invitation === "string" ? req.query.invitation.slice(0, 400) : undefined));
 });
 
+app.get("/mining/workers/:address", (req, res) => {
+  const a = String(req.params.address);
+  if (!ADDRESS_RE.test(a)) return void res.status(400).json({ error: "invalid address" });
+  const workers = feed.workers(a);
+  res.json({ address: a, count: workers.length, hashrate: workers.reduce((s, w) => s + w.hashrate, 0), workers });
+});
+
 app.get("/mining/stats", (_req, res) => {
   res.json(feed.getStats());
 });

@@ -8,6 +8,7 @@ param(
   [Parameter(Mandatory)][string]$KeyFile,
   [string]$Out = (Join-Path (Split-Path -Parent $PSScriptRoot) 'release-out'),
   [string]$BinDir = 'D:\app-builder\AlbusCrypto\fresh-worker\build\bin',
+  [string]$LinuxDir = (Join-Path (Split-Path -Parent $PSScriptRoot) 'fresh-worker\build-linux'),
   [switch]$NoBinaries
 )
 $ErrorActionPreference = 'Stop'
@@ -16,7 +17,7 @@ $chain = Join-Path $repo 'chain'
 if (-not (Test-Path $KeyFile)) { throw "Schluesseldatei fehlt: $KeyFile (erzeugen: `$env:RELEASE_KEY_FILE='...'; npx tsx src/update/release.ts keygen)" }
 if ((Resolve-Path $KeyFile).Path.StartsWith($repo, 'OrdinalIgnoreCase')) { throw 'Der Schluessel darf nicht im Repo liegen.' }
 $stage = Join-Path ([IO.Path]::GetTempPath()) ("albus-stage-" + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Force (Join-Path $stage 'chain'), (Join-Path $stage 'ui'), (Join-Path $stage 'scripts'), (Join-Path $stage 'bin') | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $stage 'chain'), (Join-Path $stage 'ui'), (Join-Path $stage 'farm'), (Join-Path $stage 'scripts'), (Join-Path $stage 'bin') | Out-Null
 try {
   Push-Location $chain
   $banner = 'import{createRequire as __cr}from"module";const require=__cr(import.meta.url);'
@@ -25,6 +26,8 @@ try {
   if ($LASTEXITCODE) { throw 'esbuild (Knoten) fehlgeschlagen' }
   npx esbuild src/ui/main.ts --bundle --platform=node --format=esm --target=node20 "--banner:js=$banner" --outfile="$stage\ui\ui.mjs" --log-level=warning
   if ($LASTEXITCODE) { throw 'esbuild (Oberflaeche) fehlgeschlagen' }
+  npx esbuild src/farm/agent.ts --bundle --platform=node --format=esm --target=node20 "--banner:js=$banner" --outfile="$stage\farm\agent.mjs" --log-level=warning
+  if ($LASTEXITCODE) { throw 'esbuild (Farm-Agent) fehlgeschlagen' }
   Pop-Location
   Copy-Item (Join-Path $PSScriptRoot 'release\*.ps1') (Join-Path $stage 'scripts')
   if (-not $NoBinaries) {
@@ -34,6 +37,12 @@ try {
       Copy-Item $p (Join-Path $stage 'bin')
     }
   }
+  if (-not $NoBinaries) {
+    $lin = Join-Path $LinuxDir 'albus-cpu'
+    if (-not (Test-Path $lin)) { throw "Fehlt: $lin (zuerst fresh-worker\build-linux.ps1, oder -NoBinaries)" }
+    New-Item -ItemType Directory -Force (Join-Path $stage 'bin-linux') | Out-Null
+    Copy-Item $lin (Join-Path $stage 'bin-linux')
+  }
   $keyFull = (Resolve-Path $KeyFile).Path
   Push-Location $chain
   $env:RELEASE_KEY_FILE = $keyFull
@@ -42,10 +51,13 @@ try {
   # Erstinstallation: ein einzelnes Programm mit den fest eingebauten Schluesseln (liegt neben dem Manifest, nicht im Release)
   npx esbuild src/update/bootstrap.ts --bundle --platform=node --format=esm --target=node20 "--banner:js=$banner" --outfile="$Out\bootstrap.mjs" --log-level=warning
   if ($LASTEXITCODE) { throw 'esbuild (Bootstrap) fehlgeschlagen' }
+  npx esbuild src/update/farm-bootstrap.ts --bundle --platform=node --format=esm --target=node20 "--banner:js=$banner" --outfile="$Out\farm-bootstrap.mjs" --log-level=warning
+  if ($LASTEXITCODE) { throw 'esbuild (Farm-Bootstrap) fehlgeschlagen' }
   Pop-Location
 } finally {
   if ((Get-Location).Path -like "$chain*") { Pop-Location }
   Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 }
 Copy-Item (Join-Path $PSScriptRoot 'install-albus.ps1') $Out -Force
+Copy-Item (Join-Path $PSScriptRoot 'install-farm.ps1') $Out -Force
 Write-Host "Fertig: $Out"

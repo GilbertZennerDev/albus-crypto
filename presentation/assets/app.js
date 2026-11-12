@@ -94,3 +94,16 @@
     }
   });
 })();
+
+(function () {
+  document.querySelectorAll("[data-copy]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var done = function () {
+        var old = b.textContent;
+        b.textContent = b.getAttribute("data-done");
+        setTimeout(function () { b.textContent = old; }, 2000);
+      };
+      if (navigator.clipboard) navigator.clipboard.writeText(b.getAttribute("data-copy")).then(done, function () {});
+    });
+  });
+})();

@@ -58,7 +58,10 @@ $dir = $PSScriptRoot
 $defs = @(
     @{ Name = 'web'; Args = @('-Command', 'Set-Location web; if (-not ((Test-Path node_modules\.bin) -and (Get-ChildItem node_modules\.bin))) { npm ci; if ($LASTEXITCODE) { exit $LASTEXITCODE } }; npm run build; exit $LASTEXITCODE') }
 )
-if (-not $SkipNative) { $defs += @{ Name = 'native'; Args = @('-File', "$dir\fresh-worker\build.ps1", '-Test') } }
+if (-not $SkipNative) {
+    $defs += @{ Name = 'native'; Args = @('-File', "$dir\fresh-worker\build.ps1", '-Test') }
+    $defs += @{ Name = 'linux'; Args = @('-File', "$dir\fresh-worker\build-linux.ps1") }
+}
 $jobs = $defs | ForEach-Object {
     Start-Job -Name $_.Name -ArgumentList $_.Args, $dir -ScriptBlock {
         param($a, $dir)
@@ -98,7 +101,7 @@ if ($Version) {
         $out = Join-Path $dir 'release-out'
         Step 'Upload: Ordner anlegen' { ssh @ssh $t "mkdir -p $remote" }
         Step "Upload: Ordner $Version" { scp @ssh -r (Join-Path $out $Version) "${t}:$remote/" }
-        Step 'Upload: bootstrap.mjs und install-albus.ps1' { scp @ssh (Join-Path $out 'bootstrap.mjs') (Join-Path $out 'install-albus.ps1') "${t}:$remote/" }
+        Step 'Upload: Installer (Miner und Farm)' { scp @ssh (Join-Path $out 'bootstrap.mjs') (Join-Path $out 'install-albus.ps1') (Join-Path $out 'farm-bootstrap.mjs') (Join-Path $out 'install-farm.ps1') "${t}:$remote/" }
         Step 'Upload: manifest.json (zuletzt)' { scp @ssh (Join-Path $out 'manifest.json') "${t}:$remote/" }
     }
 }

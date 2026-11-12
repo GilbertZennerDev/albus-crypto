@@ -128,6 +128,25 @@ test("Wallet: created once, never overwritten, private key never in any answer",
   }
 });
 
+test("Wallet link: valid key accepted once, bad keys refused, key never echoed, miner restarted", async () => {
+  const s = await start();
+  try {
+    const k = generateKeyPair();
+    const post = (b: unknown) => s.call("/api/wallet/import", { method: "POST", headers: s.good, body: b });
+    for (const bad of [null, {}, { privateKey: 5 }, { privateKey: "abc" }, { privateKey: "z".repeat(64) }, { privateKey: "0".repeat(64) }]) assert.equal((await post(bad)).status, 400);
+    assert.equal(existsSync(join(s.home, "wallet.json")), false);
+    const r = await post({ privateKey: k.privateKey.toUpperCase() });
+    assert.equal(r.status, 200);
+    assert.equal(JSON.parse(r.text).address, k.address);
+    assert.doesNotMatch(r.text, new RegExp(k.privateKey));
+    assert.equal(JSON.parse(readFileSync(join(s.home, "wallet.json"), "utf8")).publicKey, k.publicKey);
+    assert.equal((await post({ privateKey: generateKeyPair().privateKey })).status, 409);
+    assert.equal(JSON.parse(readFileSync(join(s.home, "wallet.json"), "utf8")).address, k.address);
+  } finally {
+    s.close();
+  }
+});
+
 test("Friends list: strict validation and persistence", async () => {
   const s = await start();
   try {
@@ -244,4 +263,54 @@ function require_page() {
 after(() => {
   rmSync(tmp, { recursive: true, force: true });
   setTimeout(() => process.exit(0), 50).unref();
+});
+
+test("Page script is valid JavaScript (a broken string would kill the whole page)", async () => {
+  const { APP_JS } = await import("../src/ui/page.js");
+  assert.doesNotThrow(() => new Function(APP_JS));
+});
+
+test("Server or farm computer: address-only wallet works, no key needed, no invitation, farm list comes from the configured server", async () => {
+  const home = join(tmp, `h${n++}`);
+  (await import("node:fs")).mkdirSync(home, { recursive: true });
+  const seen: string[] = [];
+  const ff = (async (url: string) => {
+    seen.push(url);
+    if (url.includes("/mining/workers/")) {
+      return { ok: true, status: 200, json: async () => ({ workers: [{ name: "Rig 1", agent: "x", hashrate: 5e6, accepted: 3, onlineSec: 60, ip: "1.2.3.4" }, { name: "S2", hashrate: 1e6 }] }) };
+    }
+    return { ok: true, status: 200, json: async () => (url.endsWith("/info") ? { networkId: "net0123456789abcd", height: 1, referralBps: 1000 } : { spendable: 0, immature: 0, unitsPerCoin: 1e8 }) };
+  }) as unknown as typeof fetch;
+  const hosts: string[] = [];
+  let changed = 0;
+  const app = createUiApp({ home, apiBase: "http://node.test", token: TOKEN, hosts, version: "1", fetchImpl: ff, farmApi: "https://farm.test/", onWalletChanged: () => changed++ });
+  const srv = http.createServer(app);
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+  const port = (srv.address() as { port: number }).port;
+  hosts.push(`127.0.0.1:${port}`);
+  const call = async (path: string, method = "GET", body?: unknown) => {
+    const r = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { "x-albus-token": TOKEN, origin: `http://127.0.0.1:${port}`, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: r.status, json: (await r.json()) as any };
+  };
+  try {
+    assert.equal((await call("/api/wallet/address", "POST", { address: "albus1xyz" })).status, 400);
+    assert.equal((await call("/api/wallet/address", "POST", { address: A("a") })).status, 200);
+    assert.equal(changed, 1);
+    assert.deepEqual(JSON.parse(readFileSync(join(home, "wallet.json"), "utf8")), { address: A("a") });
+    assert.equal((await call("/api/wallet/address", "POST", { address: A("b") })).status, 409);
+    assert.equal((await call("/api/wallet/import", "POST", { privateKey: "11".repeat(32) })).status, 409);
+    const st = await call("/api/state");
+    assert.equal(st.json.address, A("a"));
+    assert.equal(st.json.hasKey, false);
+    const inv = await call("/api/invitation", "POST", {});
+    assert.equal(inv.status, 409);
+    assert.match(inv.json.error, /only knows the address/);
+    const farm = await call("/api/farm");
+    assert.equal(farm.json.count, 2);
+    assert.equal(farm.json.hashrate, 6e6);
+    assert.equal(JSON.stringify(farm.json).includes("1.2.3.4"), false);
+    assert.ok(seen.includes(`https://farm.test/mining/workers/${A("a")}`));
+  } finally {
+    srv.close();
+  }
 });

@@ -20,6 +20,10 @@ interface Client {
   address?: string;
   invitation?: string;
   agent?: string;
+  name?: string;
+  hashrate: number;
+  accepted: number;
+  connectedAt: number;
   template?: Template;
   jobId: string;
   epoch: number;
@@ -120,6 +124,9 @@ export class JobFeed {
   private onConnection(ws: WebSocket): void {
     const c: Client = {
       ws,
+      hashrate: 0,
+      accepted: 0,
+      connectedAt: Date.now(),
       jobId: "",
       epoch: 0,
       builtAt: 0,
@@ -156,6 +163,8 @@ export class JobFeed {
         c.address = addr;
         c.invitation = typeof msg.invitation === "string" && msg.invitation.length <= 400 ? msg.invitation : undefined;
         c.agent = typeof msg.agent === "string" ? msg.agent.slice(0, 64) : undefined;
+        const nm = typeof msg.name === "string" ? msg.name.replace(/[^\p{L}\p{N} ._-]/gu, "").trim().slice(0, 40) : "";
+        c.name = nm || undefined;
         c.template = this.chain.buildTemplate(addr, c.invitation);
         c.builtAt = Date.now();
         c.epoch++;
@@ -194,6 +203,7 @@ export class JobFeed {
   }
 
   private applyHashrate(c: Client, hashrate: number): void {
+    c.hashrate = Number.isFinite(hashrate) && hashrate > 0 ? hashrate : 0;
     const level = this.levelFor(c, hashrate);
     if (level !== c.shareDifficulty) {
       c.prevShareDifficulty = c.shareDifficulty;
@@ -224,6 +234,7 @@ export class JobFeed {
       if (!grace || !hashHasHexZeros(hash, level)) return this.reject(c, msg.id, "low-difficulty");
     }
     c.seen.add(msg.nonce);
+    c.accepted++;
     this.stats.accepted++;
 
     let isBlock = false;
@@ -274,6 +285,14 @@ export class JobFeed {
       c.alive = false;
       c.ws.ping();
     }
+  }
+
+  workers(address: string) {
+    const now = Date.now();
+    return [...this.clients]
+      .filter((c) => c.address === address)
+      .map((c) => ({ name: c.name ?? c.agent ?? "miner", agent: c.agent ?? "", hashrate: c.hashrate, accepted: c.accepted, onlineSec: Math.round((now - c.connectedAt) / 1000) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   getStats() {

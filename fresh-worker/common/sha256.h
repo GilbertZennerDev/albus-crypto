@@ -6,6 +6,8 @@
 #include <immintrin.h>
 #if defined(_MSC_VER)
 #include <intrin.h>
+#elif defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+#include <cpuid.h>
 #endif
 
 namespace albus {
@@ -92,15 +94,35 @@ inline CpuFeatures detect_cpu() {
     bool osxsave = (r[2] >> 27) & 1;
     if (!osxsave || (_xgetbv(0) & 6) != 6) f.avx2 = false;
   }
+#elif defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+  unsigned a, b, c, d;
+  if (__get_cpuid_max(0, nullptr) >= 7) {
+    __cpuid_count(7, 0, a, b, c, d);
+    f.avx2 = (b >> 5) & 1;
+    f.shani = (b >> 29) & 1;
+    __cpuid(1, a, b, c, d);
+    bool osxsave = (c >> 27) & 1;
+    unsigned xlo = 0, xhi = 0;
+    if (osxsave) __asm__ volatile("xgetbv" : "=a"(xlo), "=d"(xhi) : "c"(0));
+    if (!osxsave || (xlo & 6) != 6) f.avx2 = false;
+  }
 #endif
   return f;
 }
+
+#if defined(__clang__) || defined(__GNUC__)
+#define ALBUS_TARGET_SHANI __attribute__((target("sha,sse4.1,ssse3")))
+#define ALBUS_TARGET_AVX2 __attribute__((target("avx2")))
+#else
+#define ALBUS_TARGET_SHANI
+#define ALBUS_TARGET_AVX2
+#endif
 
 struct ShaNiMid {
   __m128i abef, cdgh;
 };
 
-inline ShaNiMid shani_load_state(const uint32_t st[8]) {
+inline ALBUS_TARGET_SHANI ShaNiMid shani_load_state(const uint32_t st[8]) {
   __m128i tmp = _mm_loadu_si128((const __m128i*)&st[0]);
   __m128i s1 = _mm_loadu_si128((const __m128i*)&st[4]);
   tmp = _mm_shuffle_epi32(tmp, 0xB1);
@@ -111,13 +133,6 @@ inline ShaNiMid shani_load_state(const uint32_t st[8]) {
   return m;
 }
 
-#if defined(__clang__) || defined(__GNUC__)
-#define ALBUS_TARGET_SHANI __attribute__((target("sha,sse4.1,ssse3")))
-#define ALBUS_TARGET_AVX2 __attribute__((target("avx2")))
-#else
-#define ALBUS_TARGET_SHANI
-#define ALBUS_TARGET_AVX2
-#endif
 
 template <int I>
 ALBUS_TARGET_SHANI inline void shani_step(__m128i M[4], __m128i& s0, __m128i& s1) {
