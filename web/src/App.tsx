@@ -54,6 +54,47 @@ function Story() {
   );
 }
 
+const INSTALL_CMD = "irm https://albus.workflowsolved.com/releases/install-albus.ps1 | iex";
+
+function DownloadPanel() {
+  const [version, setVersion] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    fetch("/releases/manifest.json", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((e) => setVersion(e ? JSON.parse(e.manifest).version : null))
+      .catch(() => setVersion(null));
+  }, []);
+  const copy = () => {
+    navigator.clipboard?.writeText(INSTALL_CMD).then(() => setCopied(true), () => undefined);
+  };
+  return (
+    <section id="download" className="rounded-xl border border-violet-400/30 bg-violet-400/[0.05] p-6">
+      <h2 className="text-2xl font-bold tracking-tight">Download the Albus miner</h2>
+      <p className="mt-1 text-sm text-white/60">
+        Windows{version ? ` · version ${version}` : ""}. It keeps itself up to date and has a small window on your own PC for your wallet and your friends list.
+      </p>
+      <a
+        href="/releases/install-albus.ps1"
+        download
+        className="mt-4 inline-block rounded-lg bg-violet-500 px-5 py-2.5 font-semibold text-white hover:bg-violet-400"
+      >
+        Download installer (install-albus.ps1)
+      </a>
+      <p className="mt-4 text-sm text-white/60">Or paste this into PowerShell:</p>
+      <div className="mt-1 flex items-center gap-2">
+        <code className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-black/40 px-3 py-2 text-xs text-white/80">{INSTALL_CMD}</code>
+        <button onClick={copy} className="rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/20">{copied ? "Copied" : "Copy"}</button>
+      </div>
+      <ul className="mt-4 list-disc space-y-1 pl-5 text-xs text-white/50">
+        <li>You need Node.js and PowerShell 7. The installer offers to get them for you.</li>
+        <li>Every update is signed by the Albus publisher and checked on your PC. Your wallet and keys never leave it.</li>
+        <li>The program is not code-signed yet, so Windows may show a warning. Read the script first if you like, it is short.</li>
+      </ul>
+    </section>
+  );
+}
+
 function StatusBar({ height, mempoolSize }: { height: number | null; mempoolSize: number | null }) {
   return (
     <div className="flex flex-wrap gap-4 text-sm text-white/60">
@@ -329,6 +370,8 @@ export default function App() {
       </header>
 
       <Story />
+
+      <DownloadPanel />
 
       <SupplyPanel supply={supply} />
 

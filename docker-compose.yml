@@ -48,6 +48,9 @@ services:
       args:
         VITE_ALBUS_API_URL: ${VITE_ALBUS_API_URL}
     restart: unless-stopped
+    volumes:
+      # Signierte Releases fuer den Updater: Dateien nach /opt/albus-crypto/releases/ hochladen (nur lesen im Container)
+      - ./releases:/usr/share/nginx/html/releases:ro
     expose:
       - "80"
     healthcheck:

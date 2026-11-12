@@ -47,4 +47,5 @@ try {
   if ((Get-Location).Path -like "$chain*") { Pop-Location }
   Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 }
+Copy-Item (Join-Path $PSScriptRoot 'install-albus.ps1') $Out -Force
 Write-Host "Fertig: $Out"

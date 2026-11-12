@@ -7,8 +7,10 @@ export const indexHtml = (token: string): string => `<!doctype html>
 
 <section id="update"><h2>Updates</h2>
 <p id="update-text" class="muted">Not checked yet.</p>
+<label class="check"><input type="checkbox" id="auto-update"> Install updates automatically</label>
+<p id="update-last" class="muted small"></p>
 <button id="update-check">Check for updates</button> <button id="update-apply" hidden>Install update</button>
-<p class="muted small">Updates are signed. Your wallet, friends and settings are never touched. If the new version does not start, the old one comes back by itself.</p></section>
+<p class="muted small">Updates are signed and checked every few hours. Your wallet, friends and settings are never touched. If the new version does not start, the old one comes back by itself.</p></section>
 
 <section id="wallet"><h2>Your wallet</h2><div id="wallet-body"></div></section>
 
@@ -103,6 +105,7 @@ async function load() {
     const n = state.node;
     $("status").textContent = "Version " + state.version + " · " + (n ? "node online, height " + n.height + ", network " + n.networkId : "node not reachable");
     $("update").hidden = !state.updatesAvailable;
+    $("auto-update").checked = state.autoUpdate; $("update-last").textContent = state.lastUpdate || "";
     renderWallet(); renderRows(); renderInviter();
   } catch (e) { $("status").textContent = "Cannot talk to the miner: " + e.message; }
 }
@@ -130,6 +133,7 @@ $("invite-make").onclick = async () => {
   catch (e) { say("invite-msg", e.message, true); }
 };
 
+$("auto-update").onchange = async () => { try { await api("/settings", "PUT", { autoUpdate: $("auto-update").checked }); } catch (e) { $("update-text").textContent = e.message; } };
 $("update-check").onclick = async () => {
   try {
     const r = await api("/update/check", "POST", {});

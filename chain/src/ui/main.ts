@@ -9,6 +9,7 @@ import { downloadRelease, readCurrent, swapIn } from "../update/installer.js";
 import { UpdateError, verifyEnvelope } from "../update/manifest.js";
 import { PINNED_KEYS } from "../update/pinned-keys.js";
 import { loadFriends, rulesOf } from "./friends.js";
+import { loadSettings } from "./settings.js";
 import { createUiApp, type UpdateHooks } from "./server.js";
 import { existsSync, writeFileSync } from "node:fs";
 
@@ -21,6 +22,16 @@ mkdirSync(root, { recursive: true });
 
 const installed = readCurrent(root)?.version ?? "0.1.0";
 
+let busy = false;
+let lastNote: string | null = null;
+const failedVersions = new Set<string>();
+
+function restartSelf() {
+  if (process.env.ALBUS_UI_TASK !== "1") return;
+  execFile("pwsh", ["-NoProfile", "-Command", "Start-Sleep 2; Stop-ScheduledTask AlbusUi; Start-ScheduledTask AlbusUi"], { windowsHide: true }, () => {});
+  setTimeout(() => process.exit(0), 1500).unref();
+}
+
 function updates(): UpdateHooks | undefined {
   const url = process.env.ALBUS_UPDATE_URL;
   if (!url || PINNED_KEYS.length === 0) return undefined;
@@ -28,6 +39,7 @@ function updates(): UpdateHooks | undefined {
   const ps = (script: string, arg?: string) =>
     new Promise<void>((res, rej) => execFile("pwsh", ["-NoProfile", "-File", script, ...(arg ? [arg] : [])], (e) => (e ? rej(e) : res())));
   return {
+    last: () => lastNote,
     async check() {
       try {
         const env = await (await fetch(url.replace(/\/+$/, "") + "/manifest.json", { redirect: "error", signal: AbortSignal.timeout(15000) })).json();
@@ -39,6 +51,8 @@ function updates(): UpdateHooks | undefined {
       }
     },
     async apply() {
+      if (busy) return { ok: false, message: "An update is already running." };
+      busy = true;
       try {
         const cur = readCurrent(root);
         const m = await downloadRelease({ baseUrl: url, pinnedKeys: PINNED_KEYS, installedVersion: cur?.version ?? installed, stagingDir: staging });
@@ -56,12 +70,40 @@ function updates(): UpdateHooks | undefined {
             return false;
           },
         });
+        if (r.ok) restartSelf();
         return r.ok ? { ok: true, message: `Updated to ${r.version}.` } : { ok: false, message: `${r.error}. ${r.rolledBack ? "The old version is running again." : ""}` };
       } catch (e) {
         return { ok: false, message: `Update failed, nothing was changed: ${(e as Error).message}` };
+      } finally {
+        busy = false;
       }
     },
   };
+}
+
+async function autoUpdateLoop(u: UpdateHooks) {
+  await new Promise((r) => setTimeout(r, 2 * 60_000));
+  for (;;) {
+    try {
+      if (loadSettings(home).autoUpdate) {
+        const c = await u.check();
+        const at = new Date().toLocaleString();
+        if (c.error) lastNote = `${at}: ${c.error}`;
+        else if (!c.available) lastNote = `${at}: you have the newest version.`;
+        else if (c.version && failedVersions.has(c.version)) lastNote = `${at}: version ${c.version} failed before, not trying again until restart.`;
+        else {
+          console.log(`${new Date().toISOString()}  Automatic update to ${c.version}`);
+          const r = await u.apply();
+          if (!r.ok && c.version) failedVersions.add(c.version);
+          lastNote = `${at}: ${r.message}`;
+          console.log(`${new Date().toISOString()}  ${r.message}`);
+        }
+      }
+    } catch (e) {
+      lastNote = `Automatic update error: ${(e as Error).message}`;
+    }
+    await new Promise((r) => setTimeout(r, 6 * 3600_000));
+  }
 }
 
 async function shareLoop() {
@@ -86,10 +128,12 @@ async function shareLoop() {
 }
 
 const token = randomBytes(24).toString("hex");
-const app = createUiApp({ home, apiBase, token, hosts: [`127.0.0.1:${port}`, `localhost:${port}`], version: installed, updates: updates() });
+const upd = updates();
+const app = createUiApp({ home, apiBase, token, hosts: [`127.0.0.1:${port}`, `localhost:${port}`], version: installed, updates: upd });
 app.listen(port, "127.0.0.1", () => {
   const url = `http://127.0.0.1:${port}/`;
   console.log(`Albus miner UI: ${url}`);
   if (process.env.ALBUS_NO_BROWSER !== "1" && process.platform === "win32") execFile("cmd", ["/c", "start", "", url]);
 });
 void shareLoop();
+if (upd) void autoUpdateLoop(upd);

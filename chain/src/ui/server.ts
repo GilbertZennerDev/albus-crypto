@@ -6,11 +6,13 @@ import { readKey } from "../auto-share.js";
 import { createInvitation, encodeInvitation, ADDRESS_RE } from "../transaction.js";
 import { addressFromPublicKey, generateKeyPair } from "../wallet.js";
 import { loadFriends, saveFriends, validateFriends, FriendsError } from "./friends.js";
+import { loadSettings, saveSettings } from "./settings.js";
 import { APP_CSS, APP_JS, indexHtml } from "./page.js";
 
 export interface UpdateHooks {
   check(): Promise<{ available: boolean; version?: string; notes?: string; error?: string }>;
   apply(): Promise<{ ok: boolean; message: string }>;
+  last?(): string | null;
 }
 
 export interface UiConfig {
@@ -83,6 +85,8 @@ export function createUiApp(cfg: UiConfig) {
       account: acct && { spendable: acct.spendable, immature: acct.immature, unitsPerCoin: acct.unitsPerCoin },
       ...loadFriends(cfg.home, address),
       updatesAvailable: Boolean(cfg.updates),
+      ...loadSettings(cfg.home),
+      lastUpdate: cfg.updates?.last?.() ?? null,
     });
   });
 
@@ -115,6 +119,13 @@ export function createUiApp(cfg: UiConfig) {
     const text = encodeInvitation(createInvitation(k.privateKey, k.publicKey, inviter, info.networkId));
     writeFileSync(join(cfg.home, "invitation.txt"), text);
     res.json({ invitation: text, file: join(cfg.home, "invitation.txt") });
+  });
+
+  app.put("/api/settings", (req, res) => {
+    const a = (req.body as { autoUpdate?: unknown } | null)?.autoUpdate;
+    if (typeof a !== "boolean") return void res.status(400).json({ error: "autoUpdate must be true or false" });
+    saveSettings(cfg.home, { autoUpdate: a });
+    res.json({ autoUpdate: a });
   });
 
   app.post("/api/update/check", async (_q, res) => {

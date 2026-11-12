@@ -212,6 +212,24 @@ test("Without update setup, update routes say so", async () => {
   }
 });
 
+test("Auto-update switch: default on, only booleans, needs token and origin, survives a broken file", async () => {
+  const s = await start();
+  try {
+    const st = async () => JSON.parse((await s.call("/api/state", { headers: { "x-albus-token": TOKEN } })).text);
+    assert.equal((await st()).autoUpdate, true);
+    for (const b of [{}, { autoUpdate: "no" }, { autoUpdate: 1 }, null]) assert.equal((await s.call("/api/settings", { method: "PUT", headers: s.good, body: b })).status, 400);
+    assert.equal((await s.call("/api/settings", { method: "PUT", headers: { ...s.good, origin: "http://evil.example" }, body: { autoUpdate: false } })).status, 403);
+    assert.equal((await s.call("/api/settings", { method: "PUT", headers: { "content-type": "application/json", origin: s.good.origin }, body: { autoUpdate: false } })).status, 401);
+    assert.equal((await st()).autoUpdate, true);
+    assert.equal((await s.call("/api/settings", { method: "PUT", headers: s.good, body: { autoUpdate: false } })).status, 200);
+    assert.equal((await st()).autoUpdate, false);
+    writeFileSync(join(s.home, "settings.json"), "{ kaputt");
+    assert.equal((await st()).autoUpdate, true);
+  } finally {
+    s.close();
+  }
+});
+
 test("validateFriends: names are only text, the page inserts them with textContent", () => {
   const { APP_JS } = require_page();
   assert.doesNotMatch(APP_JS, /innerHTML|insertAdjacentHTML|document\.write|eval\(/);

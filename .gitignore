@@ -10,3 +10,6 @@ fresh-worker/build/
 
 pwd.md
 *.md
+
+release-out/
+releases/
