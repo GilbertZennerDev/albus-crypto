@@ -41,6 +41,9 @@ function Need-Install($dir) {
     -not ((Test-Path $bin) -and (Get-ChildItem $bin -ErrorAction SilentlyContinue))
 }
 
+# Der Wallet-Test im Knoten importiert die Wallet der Webseite und braucht deren node_modules (@noble/curves)
+if (Need-Install 'web') { Push-Location web; try { Step 'web: npm ci' { npm ci } } finally { Pop-Location } }
+
 # Knoten: Installation, Tests, Typpruefung (zuerst, damit kaputter Code nie in ein Release kommt)
 Push-Location chain
 try {
