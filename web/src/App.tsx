@@ -69,21 +69,30 @@ function DownloadPanel() {
     navigator.clipboard?.writeText(INSTALL_CMD).then(() => setCopied(true), () => undefined);
   };
   return (
-    <section id="download" className="rounded-xl border border-violet-400/30 bg-violet-400/[0.05] p-6">
-      <h2 className="text-2xl font-bold tracking-tight">Download the Albus miner</h2>
-      <p className="mt-1 text-sm text-white/60">
-        Windows{version ? ` · version ${version}` : ""}. It keeps itself up to date and has a small window on your own PC for your wallet and your friends list.
+    <section
+      id="download"
+      className="rounded-2xl border-2 border-violet-400 bg-gradient-to-br from-violet-600/30 via-violet-500/10 to-transparent p-6 shadow-[0_0_60px_-10px_rgba(139,92,246,0.55)] sm:p-8"
+    >
+      <p className="text-xs font-semibold uppercase tracking-widest text-violet-300">Start mining in 3 minutes</p>
+      <h2 className="mt-1 text-4xl font-extrabold tracking-tight sm:text-5xl">Download the Albus miner</h2>
+      <p className="mt-2 text-white/70">
+        Free app for Windows{version ? ` · version ${version}` : ""}. It sets everything up, mines on your own PC and updates itself.
       </p>
       <a
         href="/releases/install-albus.ps1"
         download
-        className="mt-4 inline-block rounded-lg bg-violet-500 px-5 py-2.5 font-semibold text-white hover:bg-violet-400"
+        className="mt-6 flex w-full items-center justify-center gap-3 rounded-xl bg-violet-500 px-6 py-5 text-xl font-bold text-white shadow-lg transition hover:bg-violet-400 sm:w-auto sm:inline-flex sm:text-2xl"
       >
-        Download installer (install-albus.ps1)
+        <span aria-hidden>⬇</span> Download for Windows
       </a>
-      <p className="mt-4 text-sm text-white/60">Or paste this into PowerShell:</p>
+      <ol className="mt-6 grid gap-3 text-sm sm:grid-cols-3">
+        <li className="rounded-lg bg-black/30 p-3"><b className="text-violet-300">1.</b> Click the big button. A small file <code>install-albus.ps1</code> is saved.</li>
+        <li className="rounded-lg bg-black/30 p-3"><b className="text-violet-300">2.</b> Right-click it and choose <i>Run with PowerShell</i>.</li>
+        <li className="rounded-lg bg-black/30 p-3"><b className="text-violet-300">3.</b> The miner window opens in your browser. Create your wallet there.</li>
+      </ol>
+      <p className="mt-6 text-sm text-white/60">Faster: paste this one line into PowerShell instead.</p>
       <div className="mt-1 flex items-center gap-2">
-        <code className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-black/40 px-3 py-2 text-xs text-white/80">{INSTALL_CMD}</code>
+        <code className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-black/50 px-3 py-2 text-xs text-white/80">{INSTALL_CMD}</code>
         <button onClick={copy} className="rounded-lg bg-white/10 px-3 py-2 text-xs hover:bg-white/20">{copied ? "Copied" : "Copy"}</button>
       </div>
       <ul className="mt-4 list-disc space-y-1 pl-5 text-xs text-white/50">
@@ -367,11 +376,12 @@ export default function App() {
           <p className="text-sm text-white/50">a fixed-supply proof-of-work chain, running for real</p>
         </div>
         <StatusBar height={health?.height ?? null} mempoolSize={mempoolSize} />
+        <a href="#download" className="rounded-lg bg-violet-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-400">⬇ Download</a>
       </header>
 
-      <Story />
-
       <DownloadPanel />
+
+      <Story />
 
       <SupplyPanel supply={supply} />
 
